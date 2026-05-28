@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tier 3 polish:**
+  - Mermaid architecture diagram inline in README (renders on GitHub),
+    plus the existing PNG re-encoded from 3.4 MB → 243 KB (lanczos +
+    64-color palette).
+  - `docs/runbook.md` — on-call response playbook with 7 named
+    incident scenarios, severity ladder, and the exact diagnostic
+    commands per scenario.
+  - `docs/design.md` — 11 architectural decisions explained
+    (REST executeQueries vs ADOMD.NET, MERGE vs append, MI vs SP,
+    CSV vs Parquet, adapter pattern, Fabric tag-pinning, etc.) plus
+    what we considered and rejected.
+  - `docs/gold-queries.md` — 6 ready-to-paste DAX/SQL recipes:
+    underused-pages top 10, report half-life, capacity long-tail,
+    page-load funnel, new-page adoption velocity, workspace-owner
+    accountability.
+  - `NOTICE.md` — third-party attribution (Chart.js MIT, Python
+    runtime deps with license + upstream URLs, dev tooling, diagram
+    source).
+  - `--metrics {none,appinsights,prometheus}` flag on `collector.py`
+    emits a one-line greppable summary for log scrapers — App Insights
+    `customMetric` JSON or Prometheus exposition format with
+    `pbi_page_telemetry_*` gauges.
+  - `--theme {healthcare,generic,financial}` flag on
+    `generate_sample_data.py` regenerates the synthetic data with
+    domain-specific workspace / report / page names (SaaS-product or
+    capital-markets vocab) while preserving traffic patterns.
+    Default (`healthcare`) regenerates the bundled fixture
+    byte-identically.
+  - README now opens with a Mermaid architecture diagram, an audience
+    documentation matrix linking to each new doc, and `--theme` /
+    `--metrics` examples in the quick-start.
+
 - Tier 2 hygiene pass: pytest suite (`tests/`), GitHub Actions CI matrix
   (3.10/3.11/3.12 × ubuntu/windows), `SECURITY.md`, `CONTRIBUTING.md`,
   `CODE_OF_CONDUCT.md`, `docs/data-dictionary.md`, `docs/pii-and-retention.md`,

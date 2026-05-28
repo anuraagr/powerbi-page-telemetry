@@ -69,6 +69,57 @@ today** using only documented Microsoft APIs:
 4. **`architecture.png`** — a one-glance architecture diagram (sources
    → collector → lakehouse → consumers).
 
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+    subgraph PBI["Power BI tenant"]
+        WS["Workspaces<br/>(admin REST)"]
+        UM["Usage Metrics v2<br/>per-report datasets"]
+    end
+
+    subgraph Collector["etl/collector.py"]
+        LA["LiveAdapter<br/>(REST + executeQueries)"]
+        MA["MockAdapter<br/>(--mock)"]
+        Run["run()<br/>retry · LRO · partition"]
+    end
+
+    subgraph Storage["Storage"]
+        B[("bronze/<br/>dt=YYYY-MM-DD/")]
+        S[("silver/<br/>page_views.csv<br/>schema v1.0.0")]
+    end
+
+    subgraph Consumers["Consumers"]
+        Dash["Static HTML demo<br/>(Chart.js)"]
+        PBI2["Power BI semantic model<br/>(.pq + .dax)"]
+        SQL["Ad-hoc Fabric SQL / DAX<br/>(docs/gold-queries.md)"]
+    end
+
+    subgraph Deploy["Deploy options (deploy/)"]
+        F["Fabric notebook<br/>+ Data Pipeline"]
+        A["Azure Function<br/>(TimerTrigger + MI)"]
+        L["Local cron / systemd /<br/>Task Scheduler"]
+    end
+
+    WS --> LA
+    UM --> LA
+    LA --> Run
+    MA --> Run
+    Run --> B
+    Run --> S
+    S --> Dash
+    S --> PBI2
+    S --> SQL
+    F -.runs.-> Run
+    A -.runs.-> Run
+    L -.runs.-> Run
+```
+
+The PNG below is the full-fidelity version of the same diagram for
+README readers whose Markdown viewer doesn't render Mermaid.
+
+![architecture](architecture.png)
+
 ## Quick start
 
 ```bash
@@ -84,13 +135,21 @@ xdg-open dashboard/PageUsageDashboard.html
 cd etl
 pip install -r requirements.txt
 python collector.py --mock
-# → writes out/bronze/*.csv, out/silver/page_views.csv, out/_run_summary.json
+# → writes out/bronze/dt=YYYY-MM-DD/*.csv, out/silver/page_views.csv,
+#   out/_run_summary.json
 
 # 3. (Optional) Regenerate the synthetic sample data.
-python generate_sample_data.py
+python generate_sample_data.py                  # default (healthcare)
+python generate_sample_data.py --theme generic  # SaaS / line-of-business
+python generate_sample_data.py --theme financial
 python aggregate_for_dashboard.py
 cd ../dashboard
 python bundle.py
+
+# 4. (Optional) Emit an ops-friendly one-line summary for App Insights /
+#    Prometheus scrapers.
+python collector.py --mock --metrics appinsights
+python collector.py --mock --metrics prometheus
 ```
 
 > Requires **Python 3.10+** (the collector uses PEP 604 `X | None` type hints).
@@ -125,10 +184,11 @@ provisioning commands, and a troubleshooting table — see
 │   ├── PageUsageDashboard.html          ← self-contained demo dashboard
 │   ├── _template.html                   ← Chart.js + Clawpilot theme template
 │   ├── bundle.py                        ← inlines page_views.json into template
-│   └── page_views.json                  ← aggregated payload the dashboard reads
+│   ├── page_views.json                  ← aggregated payload the dashboard reads
+│   └── PowerBI/                         ← Power Query M + DAX measures for a real Power BI report
 ├── etl/
-│   ├── collector.py                     ← the collector (mock + live modes)
-│   ├── generate_sample_data.py          ← synthetic-data generator
+│   ├── collector.py                     ← the collector (mock + live modes, retry, LRO, --metrics)
+│   ├── generate_sample_data.py          ← synthetic-data generator (--theme healthcare|generic|financial)
 │   ├── aggregate_for_dashboard.py       ← rolls silver CSV → dashboard JSON
 │   ├── requirements.txt
 │   └── sample_data/
@@ -139,10 +199,28 @@ provisioning commands, and a troubleshooting table — see
 │   ├── fabric-notebook/                 ←   Option A: Fabric notebook + Data Pipeline JSON
 │   ├── azure-function/                  ←   Option B: Azure Functions v2 (TimerTrigger + MI)
 │   └── local/                           ←   Option C: PS1 / bash / systemd / Task Scheduler
+├── tests/                               ← pytest suite (mock reproducibility, retry logic, artifacts)
+├── .github/workflows/ci.yml             ← Python 3.10/3.11/3.12 × Ubuntu/Windows
 └── docs/
     ├── deployment-guide.md              ← stand it up in your tenant
-    └── api-reference.md                 ← REST endpoints, DAX, RBAC, throttling
+    ├── api-reference.md                 ← REST endpoints, DAX, RBAC, throttling
+    ├── data-dictionary.md               ← silver schema column-by-column
+    ├── pii-and-retention.md             ← PII, RLS, DSAR, 90-day retention
+    ├── design.md                        ← why this design (and what we rejected)
+    ├── runbook.md                       ← on-call response for failed runs
+    └── gold-queries.md                  ← DAX / SQL cookbook for the questions customers ask
 ```
+
+## Documentation
+
+| Audience | Read first |
+|---|---|
+| **Customer evaluating** | [Quick start](#quick-start) → [`deploy/README.md`](deploy/README.md) |
+| **Customer deploying** | [`docs/deployment-guide.md`](docs/deployment-guide.md) → [`docs/api-reference.md`](docs/api-reference.md) → [`deploy/<option>/README.md`](deploy/) |
+| **Customer operating** | [`docs/runbook.md`](docs/runbook.md) → [`docs/data-dictionary.md`](docs/data-dictionary.md) → [`docs/pii-and-retention.md`](docs/pii-and-retention.md) |
+| **Customer extending** | [`docs/design.md`](docs/design.md) → [`CONTRIBUTING.md`](CONTRIBUTING.md) → [`tests/`](tests/) |
+| **Customer analyzing** | [`docs/gold-queries.md`](docs/gold-queries.md) → [`dashboard/PowerBI/`](dashboard/PowerBI/) |
+| **Security review** | [`SECURITY.md`](SECURITY.md) → [`docs/pii-and-retention.md`](docs/pii-and-retention.md) → [`NOTICE.md`](NOTICE.md) |
 
 ## Architecture
 

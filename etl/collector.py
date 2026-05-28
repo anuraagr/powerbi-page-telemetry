@@ -853,6 +853,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="How many days of history to pull (default: 90).")
     p.add_argument("--out", type=Path, default=None,
                    help="Output directory (default: ./out, overridable via PBI_OUTPUT_DIR).")
+    p.add_argument("--metrics", choices=["none", "appinsights", "prometheus"],
+                   default="none",
+                   help="Emit a one-line operational metric line on completion. "
+                        "'appinsights' = customMetric JSON (greppable from logs into a Workbook); "
+                        "'prometheus' = exposition-format gauges (greppable into a textfile collector).")
     args = p.parse_args(argv)
 
     out_dir = args.out or Path(os.environ.get("PBI_OUTPUT_DIR") or (HERE / "out"))
@@ -899,7 +904,54 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nERRORS ({len(summary['errors'])}):")
         for e in summary["errors"][:10]:
             print(" -", e)
+
+    if args.metrics != "none":
+        _emit_metrics(args.metrics, summary)
+
     return 0
+
+
+def _emit_metrics(fmt: str, summary: dict) -> None:
+    """Print a single greppable line summarizing this run for ops tooling.
+
+    Both formats are intentionally one-line and stdout-only so that any log
+    sink (Application Insights `traces`, Splunk, Elastic, Promtail) can
+    parse them without extra plumbing."""
+    workspaces = summary.get("workspaces", 0)
+    reports = summary.get("reports", 0)
+    datasets = summary.get("datasets", 0)
+    rows = summary.get("rows", 0)
+    errors = len(summary.get("errors", []) or [])
+    schema = summary.get("schema_version", "")
+    if fmt == "appinsights":
+        # customMetric-shaped JSON; works as-is in App Insights `customEvents`
+        # when ingested by the Functions worker, and is trivially parseable
+        # by any other log scraper.
+        line = {
+            "metric": "pbi.page_telemetry.run",
+            "schema_version": schema,
+            "workspaces": workspaces,
+            "reports": reports,
+            "datasets": datasets,
+            "rows": rows,
+            "errors": errors,
+            "ok": errors == 0,
+        }
+        print(f"METRIC {json.dumps(line, separators=(',', ':'))}")
+    elif fmt == "prometheus":
+        # Prometheus exposition format. Each line is a gauge; scrape via
+        # the Prometheus node_exporter textfile collector or push via
+        # statsd_exporter.
+        labels = f'{{schema_version="{schema}"}}'
+        out = [
+            f"pbi_page_telemetry_workspaces{labels} {workspaces}",
+            f"pbi_page_telemetry_reports{labels} {reports}",
+            f"pbi_page_telemetry_datasets{labels} {datasets}",
+            f"pbi_page_telemetry_rows{labels} {rows}",
+            f"pbi_page_telemetry_errors{labels} {errors}",
+            f"pbi_page_telemetry_ok{labels} {1 if errors == 0 else 0}",
+        ]
+        print("\n".join(out))
 
 
 if __name__ == "__main__":

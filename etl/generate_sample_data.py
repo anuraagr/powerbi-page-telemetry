@@ -350,6 +350,204 @@ PERSONAS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Themes
+#
+# `--theme` lets demoers regenerate the synthetic sample data with
+# workspace / report / page names that fit the customer's industry. The
+# statistical model is identical across themes — same traffic patterns,
+# same Zipf distribution, same dwell times, same never-viewed appendices —
+# only the labels change. That keeps the dashboard narratives ("9 pages
+# never opened in 90 days", "top 5 reports account for 65% of views")
+# consistent across themes.
+# ---------------------------------------------------------------------------
+
+
+def _retheme(catalog: list[Report], name_prefix: str, ws_themes: dict[str, dict]) -> list[Report]:
+    """Clone the structural shape of `catalog` (page counts, traffic, persona
+    weights, capacity attribution) and substitute domain-specific names.
+
+    `ws_themes` maps the original `workspace_id` (e.g. "ws-clinops") to:
+        - `workspace_id`   : new workspace id
+        - `workspace_name` : new workspace display name
+        - `reports`        : list of (report_id, report_name, [page_names]) tuples
+                             in the same order as the original workspace's reports
+    Any tuple whose page list is shorter than the original gets padded with
+    "Section N" pages so total_pages match — preserving the never-viewed
+    appendix percentages.
+    """
+    new_catalog: list[Report] = []
+    # Group original by workspace_id, preserving order.
+    by_ws: dict[str, list[Report]] = {}
+    for rep in catalog:
+        by_ws.setdefault(rep.workspace_id, []).append(rep)
+
+    for orig_ws_id, reports in by_ws.items():
+        theme = ws_themes.get(orig_ws_id)
+        if theme is None:
+            new_catalog.extend(reports)
+            continue
+        themed_reports = theme.get("reports", [])
+        for i, orig in enumerate(reports):
+            if i < len(themed_reports):
+                new_id, new_name, page_names = themed_reports[i]
+            else:
+                new_id = f"{name_prefix}-rep-{orig.workspace_id}-{i}"
+                new_name = f"{theme['workspace_name']} Report {i + 1}"
+                page_names = []
+            total = len(orig.pages)
+            # Pad / trim page name list to match original total
+            pages = list(page_names)[:total]
+            while len(pages) < total:
+                pages.append(f"Section {len(pages) + 1}")
+            new_catalog.append(
+                Report(
+                    report_id=new_id,
+                    report_name=new_name,
+                    workspace_id=theme["workspace_id"],
+                    workspace_name=theme["workspace_name"],
+                    capacity_name=orig.capacity_name,
+                    pages=pages,
+                    base_traffic=orig.base_traffic,
+                    persona_weights=orig.persona_weights,
+                ),
+            )
+    return new_catalog
+
+
+_GENERIC_THEMES = {
+    "ws-clinops": {
+        "workspace_id": "ws-ops",
+        "workspace_name": "Operations Analytics",
+        "reports": [
+            ("rep-ops-orders", "Order Lifecycle — Region East",
+             ["Funnel", "Status", "SLAs", "Backlog", "Exceptions", "Aging"]),
+            ("rep-ops-fulfillment", "Fulfillment — Daily Standup",
+             ["Inbound", "Outbound", "Returns", "Carrier Mix"]),
+            ("rep-ops-warehouse", "Warehouse Throughput",
+             ["Picks/Hour", "Dock Door Utilization", "Damage Rate"]),
+            ("rep-ops-portfolio", "Operations Portfolio",
+             ["Heatmap", "Milestones", "Forecast", "Budget", "Risks"]),
+        ],
+    },
+    "ws-medaffairs": {
+        "workspace_id": "ws-marketing",
+        "workspace_name": "Marketing Analytics",
+        "reports": [
+            ("rep-mkt-campaigns", "Campaign Performance",
+             ["Spend", "Reach", "Engagement", "Conversion"]),
+            ("rep-mkt-attribution", "Multi-Touch Attribution",
+             ["Channel Mix", "Path Length", "Decay Models"]),
+            ("rep-mkt-events", "Event ROI",
+             ["Tickets", "Attendance", "Pipeline Influence"]),
+        ],
+    },
+    "ws-rwe": {
+        "workspace_id": "ws-product",
+        "workspace_name": "Product Analytics",
+        "reports": [
+            ("rep-prd-funnel", "Activation Funnel — Cohort Builder",
+             ["Cohort", "DAU/MAU", "Retention", "Stickiness"]),
+            ("rep-prd-feature", "Feature Adoption",
+             ["Top Features", "Adoption Curve", "Stickiness"]),
+            ("rep-prd-quality", "Telemetry Quality",
+             ["Freshness", "Coverage", "Drift"]),
+        ],
+    },
+    "ws-commercial": {
+        "workspace_id": "ws-sales",
+        "workspace_name": "Sales Analytics",
+        "reports": [
+            ("rep-sales-launch", "Launch Scorecard — Product A",
+             ["Pipeline", "Win Rate", "Forecast", "Quotas"]),
+            ("rep-sales-customers", "Customer Health",
+             ["NPS", "Renewals", "Risk", "Expansion"]),
+            ("rep-sales-rep", "Rep Performance",
+             ["Activity", "Quota Attainment", "Coaching"]),
+        ],
+    },
+    "ws-mfg": {
+        "workspace_id": "ws-platform",
+        "workspace_name": "Platform Engineering",
+        "reports": [
+            ("rep-plat-services", "Service Reliability",
+             ["SLOs", "Error Budgets", "Incidents", "Postmortems"]),
+            ("rep-plat-capacity", "Capacity Planning",
+             ["Compute", "Storage", "Network", "Forecast"]),
+        ],
+    },
+}
+
+_FINANCIAL_THEMES = {
+    "ws-clinops": {
+        "workspace_id": "ws-fin-trading",
+        "workspace_name": "Trading Floor Analytics",
+        "reports": [
+            ("rep-fin-pnl", "Daily P&L by Desk",
+             ["FX", "Rates", "Credit", "Equities", "Commodities"]),
+            ("rep-fin-risk", "VaR & Risk Limits",
+             ["95% VaR", "ES", "Limit Breaches"]),
+            ("rep-fin-positions", "Positions & Hedging",
+             ["Open Positions", "Hedge Effectiveness"]),
+            ("rep-fin-exec", "Executive P&L Summary",
+             ["Headlines", "Drivers", "Outlook"]),
+        ],
+    },
+    "ws-medaffairs": {
+        "workspace_id": "ws-fin-treasury",
+        "workspace_name": "Treasury & Liquidity",
+        "reports": [
+            ("rep-fin-cash", "Cash Forecast",
+             ["13-Week Cash", "Counterparty Mix", "FX Hedges"]),
+            ("rep-fin-funding", "Funding & Bond Issuance",
+             ["Pipeline", "Spreads", "Investor Demand"]),
+            ("rep-fin-liquidity", "Liquidity Coverage Ratio",
+             ["LCR", "NSFR", "Stress Scenarios"]),
+        ],
+    },
+    "ws-rwe": {
+        "workspace_id": "ws-fin-research",
+        "workspace_name": "Quant Research",
+        "reports": [
+            ("rep-fin-factor", "Factor Performance",
+             ["Value", "Momentum", "Quality", "Size", "Low Vol"]),
+            ("rep-fin-backtest", "Strategy Backtests",
+             ["Sharpe", "Drawdown", "Turnover"]),
+            ("rep-fin-data", "Alt Data Coverage",
+             ["Coverage", "Freshness", "Outliers"]),
+        ],
+    },
+    "ws-commercial": {
+        "workspace_id": "ws-fin-wealth",
+        "workspace_name": "Wealth Management",
+        "reports": [
+            ("rep-fin-aum", "AUM by Advisor",
+             ["AUM", "Net New", "Concentration"]),
+            ("rep-fin-fees", "Fee Realization",
+             ["Effective Fee Rate", "Discounts", "Trends"]),
+            ("rep-fin-client", "Client Engagement",
+             ["Reviews", "Topics", "Action Items"]),
+        ],
+    },
+    "ws-mfg": {
+        "workspace_id": "ws-fin-ops",
+        "workspace_name": "Operations & Settlements",
+        "reports": [
+            ("rep-fin-settle", "Settlement Exceptions",
+             ["Fails", "Aging", "Root Cause"]),
+            ("rep-fin-reconcile", "Reconciliations",
+             ["Match Rate", "Aging", "Sources"]),
+        ],
+    },
+}
+
+THEMES: dict[str, list[Report]] = {
+    "healthcare": CATALOG,
+    "generic": _retheme(CATALOG, "gen", _GENERIC_THEMES),
+    "financial": _retheme(CATALOG, "fin", _FINANCIAL_THEMES),
+}
+
+
 def _zipf_weights(n: int, s: float = 1.35) -> list[float]:
     """Power-law (Zipf-like) weights — long-tail page popularity."""
     raw = [1.0 / ((i + 1) ** s) for i in range(n)]
@@ -481,17 +679,18 @@ def write_csv(rows: list[PageViewRow], out: Path) -> None:
             ])
 
 
-def write_catalog(out: Path) -> None:
+def write_catalog(out: Path, catalog: list[Report] | None = None) -> None:
     """Sidecar file listing every defined page (including never-viewed) so
     downstream aggregations can render real page names for zero-view pages.
     The actual Power BI Usage Metrics dataset includes this catalog via the
     Reports table joined with Report pages table."""
+    cat = catalog if catalog is not None else CATALOG
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["workspace_id", "workspace_name", "report_id", "report_name",
                     "page_id", "page_name", "page_ordinal", "report_total_pages"])
-        for report in CATALOG:
+        for report in cat:
             for ix, page in enumerate(report.pages):
                 w.writerow([
                     report.workspace_id, report.workspace_name,
@@ -502,13 +701,45 @@ def write_catalog(out: Path) -> None:
 
 
 if __name__ == "__main__":
-    # Generate 90 days ending "today" relative to the demo
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="generate_sample_data.py",
+        description="Generate the bundled synthetic sample data for --mock mode. "
+                    "The default invocation regenerates the committed bundle byte-for-byte "
+                    "(see tests/test_mock_reproducibility.py).",
+    )
+    parser.add_argument(
+        "--theme",
+        choices=sorted(THEMES.keys()),
+        default="healthcare",
+        help="Catalog theme (default: healthcare). "
+             "Other themes use the same traffic model and statistical shape, "
+             "only the workspace / report / page names change. Use them to make the demo "
+             "feel like the customer's own industry.",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Output directory (default: ./etl/sample_data for the healthcare theme; "
+             "./etl/sample_data/<theme> for other themes, to avoid clobbering the bundled fixture).",
+    )
+    args = parser.parse_args()
+
+    catalog = THEMES[args.theme]
+    out_dir = args.out
+    if out_dir is None:
+        base = Path(__file__).parent / "sample_data"
+        out_dir = base if args.theme == "healthcare" else base / args.theme
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     end = date(2026, 5, 27)
     start = end - timedelta(days=89)
-    rows = generate_rows(start, end)
-    out = Path(__file__).parent / "sample_data" / "page_views.csv"
-    write_csv(rows, out)
-    catalog_out = Path(__file__).parent / "sample_data" / "reports_catalog.csv"
-    write_catalog(catalog_out)
-    print(f"wrote {len(rows):,} rows to {out}")
-    print(f"wrote catalog to {catalog_out}")
+    rows = generate_rows(start, end, catalog=catalog)
+    rows_out = out_dir / "page_views.csv"
+    write_csv(rows, rows_out)
+    cat_out = out_dir / "reports_catalog.csv"
+    write_catalog(cat_out, catalog=catalog)
+    print(f"wrote {len(rows):,} rows to {rows_out}")
+    print(f"wrote catalog to {cat_out}")
