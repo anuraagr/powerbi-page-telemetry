@@ -1,0 +1,13 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
+    "PBI_TENANT_ID": "<your-tenant-guid>",
+    "PBI_CLIENT_ID": "<your-sp-client-id>",
+    "PBI_CLIENT_SECRET": "<your-sp-secret>",
+    "PBI_OUTPUT_BLOB_URL": "https://<storage-account>.blob.core.windows.net/page-telemetry/silver/page_views.csv",
+    "PBI_SCHEDULE_CRON": "0 0 6 * * *"
+  }
+}

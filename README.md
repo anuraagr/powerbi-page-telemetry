@@ -99,6 +99,20 @@ python bundle.py
 
 To run against a real tenant, see [`docs/deployment-guide.md`](docs/deployment-guide.md).
 
+## Deployment options
+
+For production, pick one of three ready-to-deploy wrappers in [`deploy/`](deploy/):
+
+| Option | When to use | Folder |
+| --- | --- | --- |
+| **A — Fabric notebook + Data Pipeline** | Fabric-first shop; you want data in the same Lakehouse | [`deploy/fabric-notebook/`](deploy/fabric-notebook/) |
+| **B — Azure Function (TimerTrigger)** | Outside Fabric; you want Managed Identity / Key Vault | [`deploy/azure-function/`](deploy/azure-function/) |
+| **C — Local / scheduled job** | POC / demo / single BI ops box (Task Scheduler / cron / systemd) | [`deploy/local/`](deploy/local/) |
+
+Each folder ships a self-contained README with step-by-step setup,
+provisioning commands, and a troubleshooting table — see
+[`deploy/README.md`](deploy/README.md) for the picker.
+
 ## Repo layout
 
 ```
@@ -120,6 +134,11 @@ To run against a real tenant, see [`docs/deployment-guide.md`](docs/deployment-g
 │   └── sample_data/
 │       ├── page_views.csv               ← 15k+ rows · 5 workspaces · 15 reports · 90 days
 │       └── reports_catalog.csv          ← every defined page (incl. never-viewed)
+├── deploy/                              ← ready-to-deploy wrappers (pick one)
+│   ├── README.md                        ←   options index
+│   ├── fabric-notebook/                 ←   Option A: Fabric notebook + Data Pipeline JSON
+│   ├── azure-function/                  ←   Option B: Azure Functions v2 (TimerTrigger + MI)
+│   └── local/                           ←   Option C: PS1 / bash / systemd / Task Scheduler
 └── docs/
     ├── deployment-guide.md              ← stand it up in your tenant
     └── api-reference.md                 ← REST endpoints, DAX, RBAC, throttling
@@ -228,7 +247,6 @@ instead of a one-line error summary.
 Issues and PRs welcome. Likely high-value additions:
 
 - A `WorkspaceSemanticModelAdapter` once Microsoft's new preview stabilises.
-- A real Fabric notebook wrapper + Data Pipeline JSON in `docs/fabric/`.
 - A T-SQL / Spark notebook that lands the silver layer in a Lakehouse
   Delta table.
 - An optional `kusto` adapter for tenants that already pipe audit logs

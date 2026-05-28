@@ -1,0 +1,11 @@
+__pycache__/
+.venv/
+.python_packages/
+local.settings.json
+.func/
+bin/
+obj/
+*.zip
+
+# The collector is copied in at deploy time — never commit it here.
+collector.py

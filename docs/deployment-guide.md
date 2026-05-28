@@ -53,35 +53,52 @@ don't, the SP doesn't have access OR the XMLA endpoint is off.
 
 ## 3. Deploy the collector
 
-### Option A — Fabric notebook (recommended)
+The `deploy/` folder ships ready-to-use wrappers for each option below.
+Pick one — each has a per-option `README.md` with full step-by-step
+instructions, provisioning commands, and a troubleshooting table.
 
-1. In Fabric, create a new **Notebook** under your governance workspace.
-2. Paste `etl/collector.py` into a cell, plus a thin wrapper:
-   ```python
-   import os, sys
-   sys.argv = ["collector.py", "--tenant", os.environ["PBI_TENANT_ID"]]
-   from collector import main; main()
-   ```
-3. Wire the secrets via **Notebook → Spark settings → Environment variables**
-   (or pull them from Key Vault with `notebookutils.credentials.getSecret`).
-4. Create a **Fabric Data Pipeline** with a single **Notebook activity**
-   pointed at this notebook. Schedule daily at 02:00 local time.
-5. Set the pipeline's failure policy to "fail on activity error" so
-   throttling surfaces in monitoring.
+| Option | When to use | Wrapper |
+| --- | --- | --- |
+| **A — Fabric notebook + Data Pipeline** | You already run Fabric; you want the data to land in the same Lakehouse as everything else; you want one-pane-of-glass monitoring | [`deploy/fabric-notebook/`](../deploy/fabric-notebook/) |
+| **B — Azure Function (TimerTrigger)** | You want this outside Fabric; you already have Azure CI/CD; you need Managed Identity to keep secrets out of code | [`deploy/azure-function/`](../deploy/azure-function/) |
+| **C — Local / scheduled job** | POC, demo, or a single BI ops box running Task Scheduler / cron / systemd | [`deploy/local/`](../deploy/local/) |
+
+### Option A — Fabric notebook (recommended for Fabric-first shops)
+
+See [`deploy/fabric-notebook/README.md`](../deploy/fabric-notebook/README.md).
+
+In short: import `PageTelemetryCollector.Notebook.py`, edit the `KEYVAULT_URL`
+constant, attach a Lakehouse, and wire the included `data-pipeline.json`
+to schedule it daily. Secrets come from Key Vault via
+`notebookutils.credentials.getSecret`. The notebook MERGEs each run's
+silver CSV into a Delta table named `page_views_silver`.
 
 ### Option B — Azure Function (TimerTrigger)
 
-If you prefer running outside Fabric, package `etl/collector.py` as a
-Function with a TimerTrigger (`0 0 6 * * *` UTC). Store secrets in
-Key Vault, bind via Managed Identity. Write output to ADLS Gen2 and use
-a Fabric shortcut to surface it as a Lakehouse table.
+See [`deploy/azure-function/README.md`](../deploy/azure-function/README.md).
 
-### Option C — Local POC
+In short: an Azure Functions **v2 Python model** app that fires daily at
+06:00 UTC, fetches secrets from Key Vault via app-setting references,
+runs the collector, and uploads the silver CSV to ADLS Gen2 using
+**Managed Identity** (`DefaultAzureCredential` + `BlobClient`). The folder
+includes a full `az` provisioning script, `deploy.ps1` / `deploy.sh`,
+and a `local.settings.json.example` for `func start` local debugging.
+
+### Option C — Local POC / scheduled job
+
+See [`deploy/local/README.md`](../deploy/local/README.md).
+
+Three flavors:
+- **Windows** — `run-collector.ps1` + `Microsoft.PowerShell.SecretManagement` + Task Scheduler.
+- **Linux** — `run-collector.sh` + a systemd `.service` and `.timer` unit pair (`OnCalendar=*-*-* 06:00:00 UTC`).
+- **macOS / plain cron** — same `run-collector.sh` wrapped in a cron entry that sources an `~/.config/<app>/env` file (`chmod 600`) so secrets never appear in the crontab.
+
+Quickest possible smoke test (no scheduler at all):
 
 ```powershell
 cd etl
 pip install -r requirements.txt
-python collector.py --mock      # offline demo
+python collector.py --mock      # offline demo, deterministic output
 python collector.py --tenant <id> --client-id <id> --client-secret <secret>
 ```
 

@@ -1,0 +1,14 @@
+[Unit]
+Description=Power BI page-telemetry collector (daily)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=pbi-telemetry
+Group=pbi-telemetry
+EnvironmentFile=/etc/powerbi-page-telemetry/env
+WorkingDirectory=/opt/powerbi-page-telemetry
+ExecStart=/opt/powerbi-page-telemetry/deploy/local/run-collector.sh
+StandardOutput=journal
+StandardError=journal
