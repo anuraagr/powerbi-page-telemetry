@@ -4,7 +4,7 @@
 > without waiting for a first-party API.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Power BI](https://img.shields.io/badge/Power%20BI-Admin%20REST%20%2B%20XMLA-F2C811.svg)](https://learn.microsoft.com/power-bi/)
 [![Microsoft Fabric](https://img.shields.io/badge/Microsoft%20Fabric-Ready-0078D4.svg)](https://learn.microsoft.com/fabric/)
 
@@ -56,6 +56,10 @@ today** using only documented Microsoft APIs:
    - **Underused pages** — every page tenant-wide with < 100 views in
      90 days, sorted ascending. The work list.
 
+   ![tenant overview](docs/dashboard-overview.png)
+
+   ![underused pages tab](docs/dashboard-underused.png)
+
 3. **`docs/deployment-guide.md`** + **`docs/api-reference.md`** —
    everything you need to stand the collector up in your tenant:
    service principal setup, capacity requirements, the exact REST
@@ -67,9 +71,14 @@ today** using only documented Microsoft APIs:
 
 ## Quick start
 
-```powershell
+```bash
 # 1. Open the dashboard. No setup required.
+#    Windows:
 start dashboard\PageUsageDashboard.html
+#    macOS:
+open dashboard/PageUsageDashboard.html
+#    Linux:
+xdg-open dashboard/PageUsageDashboard.html
 
 # 2. Run the collector end-to-end in mock mode (no tenant access).
 cd etl
@@ -80,9 +89,13 @@ python collector.py --mock
 # 3. (Optional) Regenerate the synthetic sample data.
 python generate_sample_data.py
 python aggregate_for_dashboard.py
-cd ..\dashboard
+cd ../dashboard
 python bundle.py
 ```
+
+> Requires **Python 3.10+** (the collector uses PEP 604 `X | None` type hints).
+> `requests` is the only runtime dependency; `pyadomd` is only needed for true
+> XMLA queries in live mode (see `docs/deployment-guide.md`).
 
 To run against a real tenant, see [`docs/deployment-guide.md`](docs/deployment-guide.md).
 
@@ -161,9 +174,13 @@ you'll see are:
 | Workspaces | 5 |
 | Reports | 15 |
 | Distinct pages | 231 |
-| **Pages with 0 views in 90 days** | **9** |
-| **Pages with < 100 views in 90 days** | **74** |
-| Total page views | ~155 k |
+| Total page views | 154,815 |
+| **Pages never viewed in 90 days** | **9** |
+| **Underused pages (1–99 views in 90 days)** | **67** |
+
+These numbers are reproducible — the data generator is fully deterministic
+(CRC32-seeded RNG), so `python generate_sample_data.py` will always
+produce the same `page_views.csv`.
 
 ## Why an adapter pattern, not just one script?
 
@@ -192,6 +209,19 @@ This repo is the bridge until then, and is forward-compatible: when GA
 ships, drop in a `WorkspaceSemanticModelAdapter` (one DAX query per
 workspace instead of one per report → 10–50× less capacity load) and
 keep everything else.
+
+## Troubleshooting
+
+Common gotchas and their fixes are in
+[`docs/deployment-guide.md#9-troubleshooting`](docs/deployment-guide.md#9-troubleshooting):
+
+- Garbled em-dashes in console output (Windows PowerShell 5.x / legacy `cmd.exe`)
+- `AADSTS700016` / `AADSTS7000215` authentication errors
+- Live mode runs but writes zero rows (XMLA endpoint / SP permissions)
+- `PermissionError` writing to `out/` on a network drive
+
+Setting `PBI_DEBUG=1` makes the collector emit full Python stack traces
+instead of a one-line error summary.
 
 ## Contributing
 

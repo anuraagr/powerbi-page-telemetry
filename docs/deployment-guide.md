@@ -160,3 +160,52 @@ preview at the time of writing. When it GAs:
 - [ ] Bronze retention set (e.g., 13 months) for audit/replay
 - [ ] Disaster-recovery: bronze is the source of truth; silver/gold can
       always be rebuilt
+
+## 9. Troubleshooting
+
+### Em-dashes or other Unicode garbled in the console output
+
+The collector emits UTF-8 to stdout (report names contain em-dashes etc.).
+If you see `ΓÇö` or `ù` instead of `—`:
+
+- **Windows PowerShell 5.x**: run ``[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`` before invoking the script (or upgrade to PowerShell 7+).
+- **cmd.exe (legacy)**: run ``chcp 65001`` once per session.
+- **PowerShell 7+, macOS Terminal, Linux**: should work out of the box.
+
+File output (CSV, JSON) is always UTF-8 — only the console rendering is affected.
+
+### `ERROR: collector failed: ReadTimeout`  /  `ConnectionError`  in live mode
+
+The collector cannot reach `login.microsoftonline.com` or `api.powerbi.com`.
+Check corporate proxy / VPN / firewall.  `--tenant` accepts either the GUID
+or the tenant domain (`contoso.onmicrosoft.com`).
+
+### `AADSTS700016`: Application not found in the directory
+
+The service principal's `client-id` is wrong, or it's been deleted, or you're
+signing into the wrong tenant.
+
+### `AADSTS7000215`: Invalid client secret provided
+
+The `client-secret` has expired or is incorrect. Mint a new one in the Entra portal.
+
+### Live mode runs but `rows: 0`  /  empty CSV
+
+The service principal has REST access (it enumerated workspaces) but cannot
+query the per-report Usage Metrics dataset via XMLA. Check:
+
+1. The hosting capacity is **Fabric F-SKU or Premium P-SKU** (not PPU and not shared).
+2. **XMLA endpoint** is set to **Read** on the capacity (Admin Portal → Capacities).
+3. The SP is a **Workspace Member** (or higher) on each workspace, OR `Service principals can use read-only admin APIs` is enabled tenant-wide AND the SP is in the named security group.
+4. `pyadomd` is installed and `Microsoft.AnalysisServices.AdomdClient` is available — the bundled stub returns 0 rows.
+
+### `PermissionError` writing to `out/`  on a network drive
+
+Use `--out C:\\local\\path` or set `PBI_OUTPUT_DIR`. The collector does not
+require OneDrive/SharePoint; local disk is faster.
+
+### Set `PBI_DEBUG=1` to see the full stack trace
+
+The collector swallows uncaught exceptions and prints a one-line summary by
+default. Set the env var to bypass and get the full traceback.
+

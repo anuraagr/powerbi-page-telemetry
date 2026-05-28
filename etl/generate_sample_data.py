@@ -9,12 +9,37 @@ from __future__ import annotations
 import csv
 import math
 import random
+import sys
+import zlib
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
+# Force UTF-8 stdout so em-dashes in log lines render correctly on Windows.
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+    except Exception:
+        pass
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except (AttributeError, ValueError):
+        pass
+
 RNG = random.Random(20260528)
+
+
+def _stable_hash(value: str) -> int:
+    """Deterministic hash usable as an RNG seed.
+
+    Python's built-in `hash(str)` is randomised per process (PYTHONHASHSEED),
+    which would make the generated dataset non-deterministic across runs.
+    CRC32 over the UTF-8 bytes gives us a fixed 32-bit integer.
+    """
+    return zlib.crc32(value.encode("utf-8")) & 0xFFFFFFFF
 
 # ---------------------------------------------------------------------------
 # Catalog: workspaces / reports / pages
@@ -373,7 +398,7 @@ def generate_rows(
     rows: list[PageViewRow] = []
     days = (end - start).days + 1
     for report in catalog:
-        page_weights = _shuffled_zipf(len(report.pages), seed=hash(report.report_id) & 0xFFFFFFFF)
+        page_weights = _shuffled_zipf(len(report.pages), seed=_stable_hash(report.report_id))
         # Designate a few "appendix" pages in large reports as never-viewed
         # to demonstrate the underused-pages narrative more dramatically.
         skip_ordinals: set[int] = set()

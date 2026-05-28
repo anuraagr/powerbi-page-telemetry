@@ -62,6 +62,21 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Iterator
 
+# Force UTF-8 stdout/stderr so em-dashes and other Unicode characters in
+# log lines don't get mangled by Windows' default cp1252 console codepage.
+# No-op on already-UTF-8 platforms.
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+    except Exception:
+        pass
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except (AttributeError, ValueError):
+        pass
+
 try:
     import requests
 except ImportError:
@@ -181,17 +196,33 @@ class LiveAdapter(CollectorAdapter):
     def _bearer(self) -> str:
         if self._token and time.time() < self._token_expires - 120:
             return self._token
-        resp = requests.post(
-            f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token",
-            data={
-                "grant_type": "client_credentials",
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "scope": SCOPE,
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
+        try:
+            resp = requests.post(
+                f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                    "scope": SCOPE,
+                },
+                timeout=30,
+            )
+        except requests.exceptions.RequestException as exc:
+            raise RuntimeError(
+                f"Could not reach Entra login endpoint for tenant '{self.tenant_id}': "
+                f"{type(exc).__name__}. Check the tenant ID and network connectivity."
+            ) from exc
+        if resp.status_code != 200:
+            try:
+                err = resp.json()
+                desc = err.get("error_description", "").splitlines()[0]
+                code = err.get("error", "auth_error")
+            except Exception:
+                desc, code = resp.text[:300], "auth_error"
+            raise RuntimeError(
+                f"Service principal sign-in failed ({code}, HTTP {resp.status_code}): {desc}\n"
+                "       Verify --tenant, --client-id, --client-secret and that the SP has Power BI access."
+            )
         body = resp.json()
         self._token = body["access_token"]
         self._token_expires = time.time() + int(body.get("expires_in", 3600))
@@ -372,12 +403,31 @@ class MockAdapter(CollectorAdapter):
 # Driver
 # ---------------------------------------------------------------------------
 
+def _rmtree_resilient(path: Path, attempts: int = 5) -> None:
+    """shutil.rmtree fails with WinError 5 inside OneDrive-synced folders
+    when the sync client briefly holds a handle. Retry with backoff, and as
+    a last resort empty the directory file-by-file."""
+    for i in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return
+        except PermissionError:
+            time.sleep(0.2 * (i + 1))
+    # Fallback: delete contents but leave the directory itself.
+    for child in path.rglob("*"):
+        if child.is_file():
+            try:
+                child.unlink()
+            except PermissionError:
+                pass
+
+
 def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> dict:
     bronze = out_dir / "bronze"
     silver = out_dir / "silver"
     if bronze.exists():
-        shutil.rmtree(bronze)
-    bronze.mkdir(parents=True)
+        _rmtree_resilient(bronze)
+    bronze.mkdir(parents=True, exist_ok=True)
     silver.mkdir(parents=True, exist_ok=True)
 
     summary = {
@@ -433,18 +483,57 @@ def _write_rows(path: Path, rows: Iterable[PageViewRow]) -> None:
             w.writerow(asdict(r))
 
 
+CLI_EPILOG = """\
+Examples
+--------
+  python collector.py --mock
+      Run end-to-end against the bundled synthetic sample data. No tenant
+      access required. Produces out/bronze/*.csv and out/silver/page_views.csv.
+
+  python collector.py --tenant <tenant-id> \\
+                      --client-id <sp-client-id> \\
+                      --client-secret <sp-secret>
+      Run against a real Power BI tenant. The service principal must have
+      Fabric Administrator (or be a member of the security group enabled
+      for Read-only admin APIs) AND have access to the XMLA endpoint.
+
+  python collector.py --mock --days 30 --out C:\\tmp\\pbi
+      Pull the last 30 days into a custom output directory.
+
+Environment variables (live mode, alternative to CLI flags)
+-----------------------------------------------------------
+  PBI_TENANT_ID           Entra tenant ID
+  PBI_CLIENT_ID           Service principal app ID
+  PBI_CLIENT_SECRET       Service principal secret (use Key Vault in prod)
+  PBI_XMLA_WORKSPACE      Optional: workspace to use as default XMLA endpoint
+  PBI_OUTPUT_DIR          Where to write bronze/ and silver/ (defaults to ./out)
+
+See docs/api-reference.md for the REST endpoints and DAX query, and
+docs/deployment-guide.md for end-to-end deployment in a Fabric tenant.
+"""
+
+
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        prog="collector.py",
+        description="Power BI page-level telemetry collector — pulls per-page view "
+                    "counts from every report in every workspace via the Admin REST API "
+                    "+ XMLA endpoint, and writes a conformed bronze/silver layer.",
+        epilog=CLI_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p.add_argument("--mock", action="store_true",
-                   help="Use bundled sample data — no Power BI access required.")
+                   help="Use bundled sample data - no Power BI access required.")
     p.add_argument("--tenant", help="Entra tenant ID (live mode).")
     p.add_argument("--client-id", help="Service principal client ID (live mode).")
     p.add_argument("--client-secret", help="Service principal secret (live mode).")
     p.add_argument("--days", type=int, default=90,
                    help="How many days of history to pull (default: 90).")
-    p.add_argument("--out", type=Path, default=HERE / "out",
-                   help="Output directory (default: ./out).")
+    p.add_argument("--out", type=Path, default=None,
+                   help="Output directory (default: ./out, overridable via PBI_OUTPUT_DIR).")
     args = p.parse_args(argv)
+
+    out_dir = args.out or Path(os.environ.get("PBI_OUTPUT_DIR") or (HERE / "out"))
 
     until = date.today()
     # Note: in mock mode we shift the window to the synthetic data's date range
@@ -461,12 +550,26 @@ def main(argv: list[str] | None = None) -> int:
         client_secret = args.client_secret or os.environ.get("PBI_CLIENT_SECRET")
         if not all([tenant, client_id, client_secret]):
             print("ERROR: Live mode requires --tenant/--client-id/--client-secret "
-                  "(or PBI_TENANT_ID / PBI_CLIENT_ID / PBI_CLIENT_SECRET env vars).",
+                  "(or PBI_TENANT_ID / PBI_CLIENT_ID / PBI_CLIENT_SECRET env vars).\n"
+                  "       Run `python collector.py --mock` for an offline demo.",
+                  file=sys.stderr)
+            return 2
+        if requests is None:
+            print("ERROR: The 'requests' package is required for live mode.\n"
+                  "       Install it with: pip install -r requirements.txt",
                   file=sys.stderr)
             return 2
         adapter = LiveAdapter(tenant, client_id, client_secret)
 
-    summary = run(adapter, since, until, args.out)
+    try:
+        summary = run(adapter, since, until, out_dir)
+    except Exception as exc:  # surface friendly error, full trace on --debug
+        print(f"\nERROR: collector failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        if os.environ.get("PBI_DEBUG"):
+            raise
+        print("       Set PBI_DEBUG=1 to see the full traceback.", file=sys.stderr)
+        return 1
+
     print()
     print(json.dumps({k: v for k, v in summary.items() if k != "errors"}, indent=2))
     if summary["errors"]:
