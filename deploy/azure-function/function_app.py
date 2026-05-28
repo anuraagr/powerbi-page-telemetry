@@ -23,10 +23,6 @@ from pathlib import Path
 
 import azure.functions as func
 
-# `collector.py` is copied here at deploy time (see deploy.ps1 / deploy.sh).
-# The shared module lives in ../../etl/collector.py in the repo.
-from collector import main as collector_main  # type: ignore
-
 app = func.FunctionApp()
 
 DEFAULT_CRON = "0 0 6 * * *"  # 06:00 UTC daily
@@ -49,6 +45,19 @@ def daily_page_telemetry(timer: func.TimerRequest) -> None:
                 f"Required app setting '{var}' is missing — wire it via Key Vault "
                 "reference in the Function App configuration."
             )
+
+    # Import collector lazily so a missing copy at deploy time surfaces as a
+    # clean runtime error inside an invocation, rather than as an opaque
+    # "Worker failed to function index" at host startup that prevents the
+    # function from ever being visible in the portal.
+    try:
+        from collector import main as collector_main  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "collector.py not packaged alongside function_app.py. "
+            "Run deploy.ps1 / deploy.sh from this folder, or copy "
+            "../../etl/collector.py here before `func azure functionapp publish`."
+        ) from exc
 
     with tempfile.TemporaryDirectory(prefix="pbi-page-telemetry-") as tmp:
         os.environ["PBI_OUTPUT_DIR"] = tmp

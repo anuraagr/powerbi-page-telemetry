@@ -36,10 +36,16 @@
 
 # CELL ********************
 
-# Pin the collector release. Change this to a tagged release (e.g. v0.2.0)
-# for production; keep `main` for "always latest".
-COLLECTOR_REF = "main"
+# Pin the collector release. Production should use a tagged release (e.g. v0.1.0);
+# use "main" only during development. The notebook caches the downloaded file to
+# the lakehouse so production keeps running even if GitHub is unreachable.
+COLLECTOR_REF = "v0.1.0"
 KEYVAULT_URL  = "https://<your-keyvault>.vault.azure.net/"
+
+# Silver schema version this notebook is built for. Must match
+# `SILVER_SCHEMA_VERSION` in the collector; if upstream bumps it,
+# revisit the MERGE in the final cell before promoting.
+EXPECTED_SCHEMA_VERSION = "1.0.0"
 
 # METADATA ********************
 
@@ -92,22 +98,48 @@ Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
 # CELL ********************
 
-# Download collector.py from the public repo at the pinned ref. We do this at
-# runtime rather than bundling it into the notebook so an `etl/collector.py`
-# bug fix lands on the next scheduled run without re-importing the notebook.
+# Download collector.py from the public repo at the pinned ref. Cache it to
+# the lakehouse Files/_cache/ folder so production keeps running even if
+# GitHub is briefly unreachable. To force a re-download (e.g. after bumping
+# COLLECTOR_REF), delete the cached file in the Lakehouse explorer.
 COLLECTOR_URL = (
     f"https://raw.githubusercontent.com/anuraagr/powerbi-page-telemetry/"
     f"{COLLECTOR_REF}/etl/collector.py"
 )
+CACHE_DIR = Path("/lakehouse/default/Files/_cache")
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+cached_collector = CACHE_DIR / f"collector.{COLLECTOR_REF}.py"
 local_collector = Path("/tmp/collector.py")
-urllib.request.urlretrieve(COLLECTOR_URL, local_collector)
-print(f"Fetched collector ({local_collector.stat().st_size:,} bytes) from {COLLECTOR_URL}")
+
+if cached_collector.exists() and cached_collector.stat().st_size > 0:
+    print(f"Using cached collector at {cached_collector}")
+    local_collector.write_bytes(cached_collector.read_bytes())
+else:
+    try:
+        urllib.request.urlretrieve(COLLECTOR_URL, local_collector)
+        cached_collector.write_bytes(local_collector.read_bytes())
+        print(f"Fetched collector ({local_collector.stat().st_size:,} bytes) from {COLLECTOR_URL}; cached to {cached_collector}")
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not download collector from {COLLECTOR_URL} and no cache "
+            f"exists at {cached_collector}. Check network access from Fabric "
+            "to GitHub, or pre-upload the file to the lakehouse cache folder."
+        ) from exc
 
 sys.path.insert(0, str(local_collector.parent))
 import importlib
 if "collector" in sys.modules:
     del sys.modules["collector"]
 collector = importlib.import_module("collector")
+
+# Schema-version compatibility check.
+actual = getattr(collector, "SILVER_SCHEMA_VERSION", "0.0.0")
+if actual != EXPECTED_SCHEMA_VERSION:
+    raise RuntimeError(
+        f"Collector schema version {actual!r} does not match notebook's "
+        f"expected {EXPECTED_SCHEMA_VERSION!r}. Review the final MERGE cell "
+        "before unpinning, then bump EXPECTED_SCHEMA_VERSION."
+    )
 
 # METADATA ********************
 
@@ -152,6 +184,7 @@ df = (
     spark.read                                  # noqa: F821
          .option("header", "true")
          .option("inferSchema", "true")
+         .option("comment", "#")               # skip the schema-version preamble
          .csv(silver_csv)
          .withColumn("view_date", to_date(col("view_date")))
 )

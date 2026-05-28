@@ -15,6 +15,10 @@ JSON_PATH = HERE.parent / "dashboard" / "page_views.json"
 
 def _row_iter(path: Path):
     with path.open("r", encoding="utf-8") as f:
+        # Skip a leading `# silver_schema_version=...` comment line if present.
+        first = f.readline()
+        if not first.startswith("#"):
+            f.seek(0)
         for r in csv.DictReader(f):
             r["view_count"] = int(r["view_count"])
             r["unique_users"] = int(r["unique_users"])

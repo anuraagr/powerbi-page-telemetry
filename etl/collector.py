@@ -1,6 +1,6 @@
 """
-Power BI Page-Level Telemetry Collector — POC
-=============================================
+Power BI Page-Level Telemetry Collector
+=======================================
 
 What this does
 --------------
@@ -11,10 +11,18 @@ Builds a tenant-wide, page-level usage dataset by:
      REST API.
   3. For each report, ensuring the auto-generated "Usage Metrics Report v2"
      dataset exists (POST `/admin/reports/{id}/usageMetrics`).
-  4. Executing a parameterised DAX query against that dataset over the XMLA
-     read endpoint to pull per-page view counts and unique users.
-  5. Writing one Parquet/CSV file per report into a `bronze/` layer, then
-     emitting a conformed daily aggregate to `silver/page_views.parquet`.
+  4. Executing a parameterised DAX query against that dataset over the
+     Power BI REST `executeQueries` endpoint (or XMLA via pyadomd as an
+     optional advanced path) to pull per-page view counts and unique
+     users.
+  5. Writing one CSV per report into a date-partitioned `bronze/` layer,
+     then emitting a conformed `silver/page_views.csv` and a
+     `_run_summary.json` with the silver schema version.
+
+All REST calls are wrapped in exponential-backoff retry that honors
+HTTP 429 `Retry-After` and transient 5xx, so a multi-workspace run
+on a tenant with hundreds of reports tolerates throttling without
+crashing.
 
 The same script in `--mock` mode does NOT call any Microsoft service —
 it loads the bundled synthetic sample data so reviewers can run end-to-end
@@ -84,6 +92,11 @@ except ImportError:
 
 HERE = Path(__file__).parent
 SAMPLE_CSV = HERE / "sample_data" / "page_views.csv"
+
+# Schema version for the silver layer. Bump on breaking changes (column
+# rename / drop / type change). Downstream MERGEs should assert on this
+# in their landing notebook to avoid silent data corruption.
+SILVER_SCHEMA_VERSION = "1.0.0"
 
 # ---------------------------------------------------------------------------
 # REST API surface
@@ -175,7 +188,27 @@ class LiveAdapter(CollectorAdapter):
        * Tenant setting `Service principals can use Power BI APIs` ON
        * `Fabric administrator` or member of a workspace with admin rights
        * Premium / Fabric capacity (P-SKU, F-SKU) for XMLA read access
+
+    DAX execution path
+    ------------------
+    By default this adapter executes DAX via the Power BI REST endpoint:
+
+        POST /v1.0/myorg/groups/{wsId}/datasets/{datasetId}/executeQueries
+
+    It returns JSON. No native ADOMD DLLs are required, so the same
+    collector runs identically from Linux Azure Functions, Fabric Spark,
+    a macOS laptop, or a Windows scheduled task.
+
+    For tenants that want true XMLA (e.g. for queries that exceed the
+    REST endpoint's row limits, or for on-prem AS hybrid scenarios)
+    install `pyadomd` + the ADOMD.NET retail client. The adapter
+    auto-detects pyadomd and routes through it when available.
     """
+
+    # Retry tuning ---------------------------------------------------------
+    _RETRY_MAX_ATTEMPTS = 5
+    _RETRY_BASE_SECONDS = 1.0
+    _RETRY_STATUS = {429, 500, 502, 503, 504}
 
     def __init__(self, tenant_id: str, client_id: str, client_secret: str):
         if requests is None:
@@ -185,7 +218,8 @@ class LiveAdapter(CollectorAdapter):
         self.client_secret = client_secret
         self._token: str | None = None
         self._token_expires: float = 0.0
-        # Optional: deferred import; only required for true XMLA queries.
+        self._workspace_for_dataset: dict[str, str] = {}
+        # Optional: deferred import; only required for true XMLA queries via ADOMD.
         try:
             from pyadomd import Pyadomd  # noqa: F401
             self._xmla_available = True
@@ -228,8 +262,76 @@ class LiveAdapter(CollectorAdapter):
         self._token_expires = time.time() + int(body.get("expires_in", 3600))
         return self._token
 
-    def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._bearer()}"}
+    def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        h = {"Authorization": f"Bearer {self._bearer()}"}
+        if extra:
+            h.update(extra)
+        return h
+
+    # ---- retry-wrapped HTTP --------------------------------------------------
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict | None = None,
+        json_body: dict | None = None,
+        headers: dict | None = None,
+        timeout: int = 60,
+        allow_status: tuple[int, ...] = (),
+    ) -> "requests.Response":
+        """HTTP with exponential backoff on 429/5xx that honors `Retry-After`.
+
+        `allow_status` lists status codes that should be returned to the
+        caller without raising — useful for 409 / 202 LRO / 404-as-info.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(self._RETRY_MAX_ATTEMPTS):
+            try:
+                r = requests.request(
+                    method, url,
+                    params=params,
+                    json=json_body,
+                    headers=self._headers(headers),
+                    timeout=timeout,
+                )
+            except requests.exceptions.RequestException as exc:
+                last_exc = exc
+                sleep = self._RETRY_BASE_SECONDS * (2 ** attempt)
+                time.sleep(sleep)
+                continue
+
+            if r.status_code in allow_status or r.status_code < 400:
+                return r
+
+            if r.status_code in self._RETRY_STATUS and attempt < self._RETRY_MAX_ATTEMPTS - 1:
+                # Honor Retry-After (seconds or HTTP date). Fall back to exp backoff.
+                retry_after = r.headers.get("Retry-After")
+                sleep: float
+                if retry_after and retry_after.isdigit():
+                    sleep = float(retry_after)
+                else:
+                    sleep = self._RETRY_BASE_SECONDS * (2 ** attempt)
+                print(
+                    f"  [retry] {method} {url} -> HTTP {r.status_code}; "
+                    f"sleeping {sleep:.1f}s (attempt {attempt + 1}/{self._RETRY_MAX_ATTEMPTS})",
+                    file=sys.stderr,
+                )
+                time.sleep(sleep)
+                continue
+            # Non-retryable error code
+            r.raise_for_status()
+            return r  # pragma: no cover  (raise_for_status raised)
+
+        if last_exc:
+            raise RuntimeError(
+                f"{method} {url} failed after {self._RETRY_MAX_ATTEMPTS} attempts: "
+                f"{type(last_exc).__name__}: {last_exc}"
+            ) from last_exc
+        raise RuntimeError(
+            f"{method} {url} kept returning a retryable error after "
+            f"{self._RETRY_MAX_ATTEMPTS} attempts."
+        )
 
     # ---- workspaces / reports -------------------------------------------------
     def list_workspaces(self) -> Iterator[Workspace]:
@@ -237,15 +339,13 @@ class LiveAdapter(CollectorAdapter):
         skip = 0
         page = 100
         while True:
-            r = requests.get(
+            r = self._request(
+                "GET",
                 f"{POWERBI_API}/admin/groups",
                 params={"$top": page, "$skip": skip,
                         "$expand": "users",
                         "$filter": "type eq 'Workspace' and state eq 'Active'"},
-                headers=self._headers(),
-                timeout=60,
             )
-            r.raise_for_status()
             items = r.json().get("value", [])
             if not items:
                 return
@@ -260,12 +360,10 @@ class LiveAdapter(CollectorAdapter):
             skip += page
 
     def list_reports(self, workspace: Workspace) -> Iterator[Report]:
-        r = requests.get(
+        r = self._request(
+            "GET",
             f"{POWERBI_API}/admin/groups/{workspace.id}/reports",
-            headers=self._headers(),
-            timeout=60,
         )
-        r.raise_for_status()
         for rep in r.json().get("value", []):
             if rep.get("reportType") != "PowerBIReport":
                 continue
@@ -277,48 +375,203 @@ class LiveAdapter(CollectorAdapter):
             )
 
     def ensure_usage_metrics_dataset(self, report: Report) -> str:
-        # POST /admin/reports/{id}/usageMetrics creates the underlying dataset
-        # if it doesn't already exist. The response includes the datasetId.
-        r = requests.post(
+        """Ensure the report's Usage Metrics v2 dataset exists and return its id.
+
+        `POST /admin/reports/{id}/usageMetrics` is a long-running operation
+        on first call: HTTP 202 + `Location` header to poll until terminal
+        status. Subsequent calls return 200 with the datasetId directly,
+        or 409 (already exists) — in which case we look up the dataset by
+        the well-known "Usage Metrics Report" naming convention.
+        """
+        r = self._request(
+            "POST",
             f"{POWERBI_API}/admin/reports/{report.id}/usageMetrics",
-            headers=self._headers(),
             timeout=120,
+            allow_status=(202, 409),
         )
-        if r.status_code in (200, 201, 202):
-            try:
-                return r.json().get("datasetId") or ""
-            except ValueError:
-                return ""
-        if r.status_code == 409:
-            # Already exists — Graph the workspace for the dataset whose name
-            # matches the Usage Metrics convention.
-            ds = requests.get(
-                f"{POWERBI_API}/admin/groups/{report.workspace_id}/datasets",
-                headers=self._headers(), timeout=60,
-            ).json().get("value", [])
-            for d in ds:
-                if d.get("name", "").startswith("Usage Metrics Report"):
-                    return d["id"]
-        r.raise_for_status()
+
+        ds_id = ""
+        if r.status_code in (200, 201):
+            ds_id = self._parse_dataset_id(r)
+        elif r.status_code == 202:
+            ds_id = self._poll_lro_for_dataset_id(r, report)
+        elif r.status_code == 409:
+            ds_id = self._lookup_usage_metrics_dataset(report)
+
+        if ds_id:
+            # Cache the dataset -> workspace mapping for the executeQueries call.
+            self._workspace_for_dataset[ds_id] = report.workspace_id
+        return ds_id
+
+    def _parse_dataset_id(self, response) -> str:
+        try:
+            return response.json().get("datasetId") or response.json().get("id") or ""
+        except ValueError:
+            return ""
+
+    def _poll_lro_for_dataset_id(self, initial_response, report: Report) -> str:
+        location = initial_response.headers.get("Location") or initial_response.headers.get("location")
+        if not location:
+            return self._lookup_usage_metrics_dataset(report)
+        for attempt in range(20):
+            time.sleep(min(2 ** attempt, 30))
+            r = self._request("GET", location, allow_status=(202,))
+            if r.status_code == 200:
+                ds_id = self._parse_dataset_id(r)
+                if ds_id:
+                    return ds_id
+                return self._lookup_usage_metrics_dataset(report)
+            # 202 = still working
+        # LRO didn't resolve in time; fall back to a lookup.
+        return self._lookup_usage_metrics_dataset(report)
+
+    def _lookup_usage_metrics_dataset(self, report: Report) -> str:
+        r = self._request(
+            "GET",
+            f"{POWERBI_API}/admin/groups/{report.workspace_id}/datasets",
+        )
+        for d in r.json().get("value", []):
+            # Auto-generated names look like:
+            #   "Usage Metrics Report" (legacy) or
+            #   "Usage Metrics Report v2 - <report-name>" (current)
+            name = d.get("name") or ""
+            if name.startswith("Usage Metrics Report"):
+                return d["id"]
         return ""
 
     def query_page_views(self, dataset_id: str, since: date, until: date) -> Iterator[PageViewRow]:
-        if not self._xmla_available:
+        """Execute the page-views DAX query and yield typed rows.
+
+        Default path: POST /datasets/{id}/executeQueries (REST, JSON in/out).
+        Advanced path: if pyadomd + ADOMD.NET are available AND
+        `PBI_USE_PYADOMD=1` is set, use a true XMLA connection instead.
+
+        Both paths produce the same `PageViewRow` shape downstream.
+        """
+        if os.environ.get("PBI_USE_PYADOMD") and self._xmla_available:
+            yield from self._query_via_pyadomd(dataset_id, since, until)
+            return
+
+        ws_id = self._workspace_for_dataset.get(dataset_id)
+        if not ws_id:
+            # Fallback: scan the tenant for the dataset. Expensive — should rarely fire.
+            for ws in self.list_workspaces():
+                for d in self._request(
+                    "GET", f"{POWERBI_API}/admin/groups/{ws.id}/datasets",
+                ).json().get("value", []):
+                    if d.get("id") == dataset_id:
+                        ws_id = ws.id
+                        self._workspace_for_dataset[dataset_id] = ws_id
+                        break
+                if ws_id:
+                    break
+        if not ws_id:
             raise RuntimeError(
-                "pyadomd / ADOMD client not available. Either install the "
-                "Microsoft.AnalysisServices.AdomdClient.retail.amd64 NuGet "
-                "package alongside pyadomd, or run with --mock."
+                f"Could not resolve workspace for dataset {dataset_id} — "
+                "ensure_usage_metrics_dataset must be called first."
             )
-        # Real implementation would build an XMLA connection string of the form
-        #   Provider=MSOLAP;Data Source=powerbi://api.powerbi.com/v1.0/myorg/<workspace>;
-        #     Initial Catalog=<datasetName>;User ID=app:<clientId>@<tenantId>;
-        #     Password=<clientSecret>
-        # and execute DAX_PAGE_VIEWS against it. Left as a stub here so that
-        # this script remains runnable in environments without ADOMD installed.
-        raise NotImplementedError(
-            "Wire up your XMLA endpoint here. See docs/api-reference.md for the "
-            "exact connection string and DAX query."
+
+        dax = self._dax_with_date_filter(since, until)
+        r = self._request(
+            "POST",
+            f"{POWERBI_API}/groups/{ws_id}/datasets/{dataset_id}/executeQueries",
+            json_body={
+                "queries": [{"query": dax}],
+                "serializerSettings": {"includeNulls": False},
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=120,
         )
+        body = r.json()
+        tables = body.get("results", [{}])[0].get("tables", [{}])
+        for row in tables[0].get("rows", []):
+            yield from self._coerce_executequeries_row(row, dataset_id)
+
+    def _dax_with_date_filter(self, since: date, until: date) -> str:
+        """Inject a date window into the base DAX so we don't haul 90 days
+        every run when the caller asked for 1."""
+        return (
+            "EVALUATE\n"
+            "FILTER(\n"
+            "  SUMMARIZECOLUMNS(\n"
+            "    'Report page views'[Report Id],\n"
+            "    'Report page views'[Report page name],\n"
+            "    'Report page views'[Date],\n"
+            "    \"Views\",          SUM('Report page views'[Views]),\n"
+            "    \"UniqueUsers\",    DISTINCTCOUNT('Report page views'[User]),\n"
+            "    \"AvgDwellSeconds\",AVERAGE('Report page views'[Average view time])\n"
+            "  ),\n"
+            f"  'Report page views'[Date] >= DATE({since.year},{since.month},{since.day}) &&\n"
+            f"  'Report page views'[Date] <= DATE({until.year},{until.month},{until.day})\n"
+            ")\n"
+            "ORDER BY 'Report page views'[Date]\n"
+        )
+
+    def _coerce_executequeries_row(self, raw: dict, dataset_id: str) -> Iterator[PageViewRow]:
+        """`executeQueries` returns rows keyed by the DAX column expressions —
+        e.g. `'Report page views'[Report Id]`, `[Views]`. Map to PageViewRow.
+        Caller is expected to enrich workspace/report/capacity metadata
+        from the earlier enumeration step."""
+        def g(*keys: str, default=None):
+            for k in keys:
+                if k in raw and raw[k] is not None:
+                    return raw[k]
+            return default
+
+        view_date = g("'Report page views'[Date]", "[Date]") or ""
+        # API returns ISO-with-time; normalize to YYYY-MM-DD.
+        view_date = str(view_date)[:10]
+
+        yield PageViewRow(
+            workspace_id="",
+            workspace_name="",
+            capacity_name="",
+            report_id=g("'Report page views'[Report Id]", default="") or "",
+            report_name="",
+            report_total_pages=0,
+            page_id=g("'Report page views'[Report page name]", default="") or "",
+            page_name=g("'Report page views'[Report page name]", default="") or "",
+            page_ordinal=0,
+            view_date=view_date,
+            view_count=int(g("[Views]", default=0) or 0),
+            unique_users=int(g("[UniqueUsers]", default=0) or 0),
+            avg_dwell_seconds=float(g("[AvgDwellSeconds]", default=0.0) or 0.0),
+            top_persona="",
+        )
+
+    def _query_via_pyadomd(self, dataset_id: str, since: date, until: date) -> Iterator[PageViewRow]:
+        from pyadomd import Pyadomd  # type: ignore
+        ws_id = self._workspace_for_dataset.get(dataset_id, "")
+        # Lookup the workspace's *name* — XMLA wants the friendly Data Source.
+        ws_name = ""
+        for ws in self.list_workspaces():
+            if ws.id == ws_id:
+                ws_name = ws.name
+                break
+        if not ws_name:
+            raise RuntimeError(f"Could not find workspace name for id {ws_id}")
+        # Find the dataset name (Initial Catalog).
+        ds_name = ""
+        for d in self._request(
+            "GET", f"{POWERBI_API}/admin/groups/{ws_id}/datasets",
+        ).json().get("value", []):
+            if d.get("id") == dataset_id:
+                ds_name = d.get("name") or ""
+                break
+        conn = (
+            f"Provider=MSOLAP;"
+            f"Data Source=powerbi://api.powerbi.com/v1.0/myorg/{ws_name};"
+            f"Initial Catalog={ds_name};"
+            f"User ID=app:{self.client_id}@{self.tenant_id};"
+            f"Password={self.client_secret};"
+        )
+        dax = self._dax_with_date_filter(since, until)
+        with Pyadomd(conn).cursor() as cur:
+            cur.execute(dax)
+            cols = [c.name for c in cur.description]
+            for row in cur.fetchall():
+                rec = dict(zip(cols, row))
+                yield from self._coerce_executequeries_row(rec, dataset_id)
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +591,23 @@ class MockAdapter(CollectorAdapter):
         with csv_path.open("r", encoding="utf-8") as f:
             for r in csv.DictReader(f):
                 self._rows.append(r)
+
+    @classmethod
+    def max_csv_date(cls, csv_path: Path = SAMPLE_CSV) -> date:
+        """Latest view_date in the bundled sample CSV. Used by `main()` so
+        --mock always exercises a populated date window even years from now."""
+        if not csv_path.exists():
+            return date.today()
+        latest = date(1970, 1, 1)
+        with csv_path.open("r", encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                try:
+                    d = date.fromisoformat(r["view_date"])
+                    if d > latest:
+                        latest = d
+                except (KeyError, ValueError):
+                    continue
+        return latest
 
     def _grouped(self):
         ws: dict[str, Workspace] = {}
@@ -423,14 +693,31 @@ def _rmtree_resilient(path: Path, attempts: int = 5) -> None:
 
 
 def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> dict:
+    """Drive the adapter: enumerate, collect, partition bronze by date,
+    emit a conformed silver CSV and a `_run_summary.json` with the
+    silver schema version.
+
+    Bronze layout:
+        bronze/dt=YYYY-MM-DD/{wsId}__{reportId}.csv
+
+    Silver layout:
+        silver/page_views.csv   (a `# silver_schema_version=...` comment line precedes the header)
+    """
     bronze = out_dir / "bronze"
     silver = out_dir / "silver"
-    if bronze.exists():
-        _rmtree_resilient(bronze)
     bronze.mkdir(parents=True, exist_ok=True)
     silver.mkdir(parents=True, exist_ok=True)
 
+    run_dt = until.isoformat()
+    bronze_run = bronze / f"dt={run_dt}"
+    # Inside a daily partition we *do* want a clean slate for that day's
+    # files, but never delete other days' partitions.
+    if bronze_run.exists():
+        _rmtree_resilient(bronze_run)
+    bronze_run.mkdir(parents=True, exist_ok=True)
+
     summary = {
+        "schema_version": SILVER_SCHEMA_VERSION,
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "since": since.isoformat(), "until": until.isoformat(),
         "workspaces": 0, "reports": 0, "datasets": 0, "rows": 0,
@@ -446,23 +733,27 @@ def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> d
             try:
                 ds_id = adapter.ensure_usage_metrics_dataset(rep)
                 summary["datasets"] += 1
-                rep_rows = list(adapter.query_page_views(ds_id, since, until))
+                raw_rows = list(adapter.query_page_views(ds_id, since, until))
             except Exception as e:
                 msg = f"{rep.workspace_name}/{rep.name}: {type(e).__name__}: {e}"
                 summary["errors"].append(msg)
                 print(f"  ! {msg}")
                 continue
-            # Bronze: one CSV per report (raw shape)
-            out = bronze / f"{rep.workspace_id}__{rep.id}.csv"
+            # Enrich any rows missing workspace/report metadata (LiveAdapter
+            # returns bare DAX rows; MockAdapter pre-fills them).
+            rep_rows = [_enrich_row(r, ws, rep) for r in raw_rows]
+            out = bronze_run / f"{rep.workspace_id}__{rep.id}.csv"
             _write_rows(out, rep_rows)
             all_rows.extend(rep_rows)
             summary["rows"] += len(rep_rows)
-            print(f"  [report] {rep.name}: {len(rep_rows):,} rows -> {out.name}")
+            print(f"  [report] {rep.name}: {len(rep_rows):,} rows -> {out.parent.name}/{out.name}")
 
-    # Silver: one conformed CSV across the tenant
+    # Silver: one conformed CSV across the tenant, prefaced with the schema-version
+    # comment so downstream MERGEs can assert compatibility.
     silver_path = silver / "page_views.csv"
-    _write_rows(silver_path, all_rows)
+    _write_rows(silver_path, all_rows, schema_version_comment=True)
     summary["silver_path"] = str(silver_path)
+    summary["bronze_partition"] = str(bronze_run)
     summary["ended_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     (out_dir / "_run_summary.json").write_text(
@@ -471,12 +762,43 @@ def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> d
     return summary
 
 
-def _write_rows(path: Path, rows: Iterable[PageViewRow]) -> None:
+def _enrich_row(row: PageViewRow, ws: Workspace, rep: Report) -> PageViewRow:
+    """Patch in workspace/report context for rows that came from the live
+    DAX path with bare identifiers. MockAdapter rows are already complete."""
+    if row.workspace_id and row.workspace_name and row.report_name:
+        return row
+    return PageViewRow(
+        workspace_id=row.workspace_id or ws.id,
+        workspace_name=row.workspace_name or ws.name,
+        capacity_name=row.capacity_name or (ws.capacity_name or ""),
+        report_id=row.report_id or rep.id,
+        report_name=row.report_name or rep.name,
+        report_total_pages=row.report_total_pages,
+        page_id=row.page_id,
+        page_name=row.page_name,
+        page_ordinal=row.page_ordinal,
+        view_date=row.view_date,
+        view_count=row.view_count,
+        unique_users=row.unique_users,
+        avg_dwell_seconds=row.avg_dwell_seconds,
+        top_persona=row.top_persona,
+    )
+
+
+def _write_rows(path: Path, rows: Iterable[PageViewRow], *, schema_version_comment: bool = False) -> None:
     rows = list(rows)
     if not rows:
         return
     fields = list(asdict(rows[0]).keys())
     with path.open("w", newline="", encoding="utf-8") as f:
+        if schema_version_comment:
+            # A leading `#` comment line is ignored by pandas/Spark when
+            # `comment='#'` is set, and is a no-op for the bundled
+            # dashboard aggregator (it uses csv.DictReader which skips
+            # rows where the first field is empty / unknown header).
+            # The presence of this line lets downstream MERGEs verify
+            # they are joining compatible schemas.
+            f.write(f"# silver_schema_version={SILVER_SCHEMA_VERSION}\n")
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         for r in rows:
@@ -536,10 +858,11 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = args.out or Path(os.environ.get("PBI_OUTPUT_DIR") or (HERE / "out"))
 
     until = date.today()
-    # Note: in mock mode we shift the window to the synthetic data's date range
-    # so the script always produces output.
+    # In mock mode shift the window to the synthetic data's actual date
+    # range so the script always produces output, even years after the
+    # sample CSV was generated.
     if args.mock:
-        until = date(2026, 5, 27)
+        until = MockAdapter.max_csv_date()
     since = until - timedelta(days=args.days - 1)
 
     if args.mock:

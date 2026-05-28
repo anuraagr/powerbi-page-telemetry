@@ -28,6 +28,7 @@ REST and XMLA (XMLA accepts the same token via `Password=` when the
 | `GET /v1.0/myorg/admin/groups/{wsId}/reports` | List reports in a workspace | shared bucket |
 | `POST /v1.0/myorg/admin/reports/{reportId}/usageMetrics` | Ensure Usage Metrics v2 dataset exists; returns `datasetId` | shared bucket |
 | `GET /v1.0/myorg/admin/groups/{wsId}/datasets` | Find Usage Metrics dataset id if POST returned 409 | shared bucket |
+| `POST /v1.0/myorg/groups/{wsId}/datasets/{dsId}/executeQueries` | Execute DAX against the Usage Metrics dataset (REST path, no DLLs) | 120 req/min per user |
 | `GET /v1.0/myorg/admin/capacities` | (optional) Map workspaces → capacities for tier-of-service reporting | shared bucket |
 
 All admin endpoints require the service principal to be a **Fabric
@@ -59,9 +60,35 @@ event is the finest grain available:
 → no `Page` or `Section` field. That's why this collector goes via XMLA
 on the Usage Metrics dataset instead.
 
-## 3. XMLA endpoint
+## 3. DAX execution endpoint
 
-Connection string template (use with MSOLAP / ADOMD.NET / pyadomd / SSMS):
+The collector executes DAX two possible ways. By default it uses the **REST
+endpoint**, which has zero native dependencies and works identically from
+Linux Functions, Fabric Spark, and any laptop:
+
+`POST https://api.powerbi.com/v1.0/myorg/groups/{wsId}/datasets/{datasetId}/executeQueries`
+
+```http
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "queries": [{"query": "EVALUATE ..."}],
+  "serializerSettings": {"includeNulls": false}
+}
+```
+
+Returns JSON. Each `results[].tables[].rows[]` entry is keyed by the DAX
+column expression — `'Report page views'[Report Id]`, `[Views]`, etc.
+Row limit: 100,000 rows per query. For queries that exceed that, page
+by date filter or fall back to the XMLA path below.
+
+### Optional: true XMLA via pyadomd
+
+For very large datasets or on-prem Analysis Services hybrid scenarios,
+set `PBI_USE_PYADOMD=1` and install pyadomd + the ADOMD.NET retail
+client. The connection string template (use with MSOLAP / ADOMD.NET /
+pyadomd / SSMS) is:
 
 ```
 Provider=MSOLAP;
@@ -75,6 +102,8 @@ Requires:
 - Premium / Fabric capacity backing the workspace.
 - Admin Portal → Capacity → **XMLA endpoint = Read** or **Read Write**.
 - The service principal is a workspace member or has admin rights.
+- Windows host (ADOMD.NET is Windows-only). For non-Windows runtimes,
+  stick with the REST path.
 
 ## 4. The DAX query
 
