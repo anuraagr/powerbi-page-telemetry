@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Power BI Page Telemetry — Tenant View (Demo)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<script>
+  (() => {
+    const param = new URLSearchParams(window.location.search).get("clawpilotTheme");
+    const theme =
+      param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --cp-bg: #f7f4ef;
+  --cp-bg-elevated: #fcfbf8;
+  --cp-surface: #ffffff;
+  --cp-surface-soft: #f5f5f5;
+  --cp-border: #dedede;
+  --cp-border-strong: #919191;
+  --cp-text: #242424;
+  --cp-text-muted: #5c5c5c;
+  --cp-text-soft: #6f6f6f;
+  --cp-accent: #b11f4b;
+  --cp-accent-hover: #9a1a41;
+  --cp-accent-soft: rgba(177, 31, 75, 0.08);
+  --cp-accent-fg: #ffffff;
+  --cp-success: #16a34a;
+  --cp-danger: #dc2626;
+  --cp-warning: #f59e0b;
+  --cp-link: #0078d4;
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+  --cp-overlay: rgba(255, 255, 255, 0.8);
+  --cp-panel: rgba(255, 255, 255, 0.86);
+  --cp-panel-strong: rgba(255, 255, 255, 0.96);
+  --cp-sheen: rgba(255, 255, 255, 0.55);
+  --cp-highlight: rgba(177, 31, 75, 0.12);
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --cp-bg: #3d3b3a;
+  --cp-bg-elevated: #343231;
+  --cp-surface: #292929;
+  --cp-surface-soft: #2e2e2e;
+  --cp-border: #474747;
+  --cp-border-strong: #5f5f5f;
+  --cp-text: #dedede;
+  --cp-text-muted: #919191;
+  --cp-text-soft: #b0b0b0;
+  --cp-accent: #fd8ea1;
+  --cp-accent-hover: #fb7b91;
+  --cp-accent-soft: rgba(253, 142, 161, 0.14);
+  --cp-accent-fg: #1a1a1a;
+  --cp-success: #4ade80;
+  --cp-danger: #f87171;
+  --cp-warning: #fbbf24;
+  --cp-link: #4da6ff;
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  --cp-overlay: rgba(41, 41, 41, 0.88);
+  --cp-panel: rgba(41, 41, 41, 0.72);
+  --cp-panel-strong: rgba(41, 41, 41, 0.96);
+  --cp-sheen: rgba(255, 255, 255, 0.04);
+  --cp-highlight: rgba(253, 142, 161, 0.12);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--cp-bg);
+  color: var(--cp-text);
+  font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+header.topbar {
+  background: var(--cp-bg-elevated);
+  border-bottom: 1px solid var(--cp-border);
+  padding: 18px 32px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+header.topbar h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+header.topbar .sub {
+  color: var(--cp-text-muted);
+  font-size: 13px;
+}
+header.topbar .meta {
+  color: var(--cp-text-muted);
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+header.topbar .badge {
+  display: inline-block;
+  background: var(--cp-accent-soft);
+  color: var(--cp-accent);
+  border: 1px solid var(--cp-accent);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 10px;
+  margin-right: 8px;
+}
+main { padding: 24px 32px 80px; max-width: 1480px; margin: 0 auto; }
+
+/* KPI strip */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.kpi {
+  background: var(--cp-surface);
+  border: 1px solid var(--cp-border);
+  border-radius: 16px;
+  padding: 16px 18px;
+  box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14);
+}
+.kpi .label {
+  color: var(--cp-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.kpi .value {
+  font-size: 28px;
+  font-weight: 600;
+  margin-top: 4px;
+  letter-spacing: -0.02em;
+}
+.kpi .sub {
+  color: var(--cp-text-soft);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.kpi.accent .value { color: var(--cp-accent); }
+.kpi.warning .value { color: var(--cp-warning); }
+
+/* Layout grids */
+.grid-2 {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+@media (max-width: 1100px) {
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+}
+
+.card {
+  background: var(--cp-surface);
+  border: 1px solid var(--cp-border);
+  border-radius: 16px;
+  padding: 18px 20px;
+  box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14);
+}
+.card h2 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.card .desc {
+  color: var(--cp-text-muted);
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+.card .chart-host { position: relative; height: 240px; }
+.card .chart-host.tall { height: 320px; }
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+table th, table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--cp-border);
+}
+table th {
+  color: var(--cp-text-muted);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--cp-border-strong);
+  background: var(--cp-surface-soft);
+  position: sticky;
+  top: 0;
+}
+table td.num, table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll-tbl { max-height: 360px; overflow: auto; border-radius: 10px; border: 1px solid var(--cp-border); }
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--cp-border);
+  margin-bottom: 18px;
+}
+.tab {
+  background: none;
+  border: 0;
+  padding: 10px 16px;
+  font: inherit;
+  color: var(--cp-text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tab:hover { color: var(--cp-text); }
+.tab.active {
+  color: var(--cp-accent);
+  border-bottom-color: var(--cp-accent);
+  font-weight: 600;
+}
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* Report drilldown */
+.report-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.report-toolbar select, .report-toolbar input {
+  background: var(--cp-surface);
+  border: 1px solid var(--cp-border);
+  color: var(--cp-text);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  min-width: 220px;
+}
+.report-toolbar label {
+  color: var(--cp-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.report-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.report-summary .stat {
+  background: var(--cp-surface-soft);
+  border: 1px solid var(--cp-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.report-summary .stat .l {
+  color: var(--cp-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.report-summary .stat .v { font-size: 18px; font-weight: 600; }
+.report-summary .stat.accent .v { color: var(--cp-accent); }
+.report-summary .stat.warn .v { color: var(--cp-warning); }
+
+/* Page bars */
+.page-bars {
+  max-height: 480px;
+  overflow: auto;
+  border: 1px solid var(--cp-border);
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+.page-bar {
+  display: grid;
+  grid-template-columns: 36px 1fr 70px;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.page-bar .ord {
+  color: var(--cp-text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.page-bar .name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.page-bar .views {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--cp-text-muted);
+}
+.page-bar .bar-wrap {
+  position: relative;
+  background: var(--cp-surface-soft);
+  border-radius: 6px;
+  height: 14px;
+  overflow: hidden;
+}
+.page-bar .bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--cp-accent);
+  border-radius: 6px;
+  opacity: 0.85;
+}
+.page-bar.zero .bar-wrap {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--cp-surface-soft),
+    var(--cp-surface-soft) 4px,
+    var(--cp-border) 4px,
+    var(--cp-border) 5px
+  );
+}
+.page-bar.zero .name { color: var(--cp-text-muted); font-style: italic; }
+.page-bar.zero .views { color: var(--cp-danger); font-weight: 600; }
+
+.row-wrap { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+@media (max-width: 1100px) { .row-wrap { grid-template-columns: 1fr; } }
+
+footer {
+  text-align: center;
+  color: var(--cp-text-soft);
+  font-size: 11px;
+  padding: 16px;
+}
+.theme-toggle {
+  background: var(--cp-surface);
+  border: 1px solid var(--cp-border);
+  color: var(--cp-text);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: 8px;
+}
+.theme-toggle:hover { border-color: var(--cp-border-strong); }
+.callout {
+  background: var(--cp-accent-soft);
+  border-left: 3px solid var(--cp-accent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--cp-text);
+  margin-bottom: 16px;
+}
+.callout strong { color: var(--cp-accent); }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <h1><span class="badge">POC</span>Power BI Page-Level Telemetry — Tenant View</h1>
+    <div class="sub">Aggregated <strong id="m-pages">…</strong> pages across <strong id="m-reports">…</strong> reports and <strong id="m-ws">…</strong> workspaces · <strong id="m-views">…</strong> page views in last 90 days</div>
+  </div>
+  <div class="meta">
+    Demo dataset · synthetic healthcare workspaces<br/>
+    Generated <span id="m-gen">…</span>
+    <button class="theme-toggle" id="themeToggle">Toggle theme</button>
+  </div>
+</header>
+
+<main>
+  <div class="callout">
+    <strong>Why this matters:</strong> Power BI's native APIs (<code>Get Activity Events</code>, scanner) only emit
+    report-level <code>ViewReport</code> events. For multi-page reports — common in clinical-trial tracking
+    where reports can have 40–80 pages — report-level views drastically underrepresent actual usage.
+    This dashboard demonstrates the centralized page-level rollup that BI teams need, built from
+    the per-report Usage Metrics datasets via XMLA. It's the bridge until the
+    Monitor Usage Metrics for Workspaces preview GAs.
+  </div>
+
+  <!-- KPI strip -->
+  <div class="kpi-row" id="kpiRow"></div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab active" data-tab="overview">Tenant overview</button>
+    <button class="tab" data-tab="reports">Report drill-down</button>
+    <button class="tab" data-tab="underused">Underused pages</button>
+  </div>
+
+  <!-- TAB 1: overview -->
+  <section class="tab-panel active" id="tab-overview">
+    <div class="grid-2">
+      <div class="card">
+        <h2>Daily page views — tenant total</h2>
+        <p class="desc">All workspaces, all reports. Weekday seasonality with steady 90-day growth.</p>
+        <div class="chart-host"><canvas id="dailyChart"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Page-view distribution</h2>
+        <p class="desc">How many pages fall into each usage bucket. Highlights the long tail.</p>
+        <div class="chart-host"><canvas id="distChart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h2>Views by workspace</h2>
+        <p class="desc">Which workspaces drive the most page traffic.</p>
+        <div class="chart-host"><canvas id="wsChart"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Top 15 pages tenant-wide</h2>
+        <p class="desc">Most-viewed individual pages across all reports.</p>
+        <div class="scroll-tbl">
+          <table id="topPagesTable">
+            <thead><tr><th>Workspace</th><th>Report</th><th>Page</th><th class="num">Views</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB 2: reports drilldown -->
+  <section class="tab-panel" id="tab-reports">
+    <div class="report-toolbar">
+      <label for="reportPicker">Report</label>
+      <select id="reportPicker"></select>
+      <span style="flex:1"></span>
+      <label for="pageFilter">Filter pages</label>
+      <input id="pageFilter" type="search" placeholder="e.g. SUSAR, biomarker, payer…" />
+    </div>
+
+    <div class="report-summary" id="reportSummary"></div>
+
+    <div class="row-wrap">
+      <div class="card">
+        <h2>Per-page views (rank-ordered)</h2>
+        <p class="desc">Each bar is one page in this report. Hatched bars = pages that received zero views in the period.</p>
+        <div id="pageBars" class="page-bars"></div>
+      </div>
+      <div class="card">
+        <h2>Top persona by views</h2>
+        <p class="desc">Which audience is the heaviest consumer of this report.</p>
+        <div class="chart-host"><canvas id="personaChart"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB 3: underused -->
+  <section class="tab-panel" id="tab-underused">
+    <div class="card">
+      <h2>Pages with low or zero views (last 90 days)</h2>
+      <p class="desc">Candidates for consolidation, deprecation, or repromotion. Threshold: under <span id="undThresh">100</span> views.</p>
+      <div class="scroll-tbl" style="max-height: 600px;">
+        <table id="underusedTable">
+          <thead><tr><th>Workspace</th><th>Report</th><th>Page</th><th class="num">Views (90d)</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  Reference implementation — Power BI page-level telemetry centralization · MIT licensed
+</footer>
+
+<!-- Chart.js inline-friendly via CDN (UMD) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+
+<!-- DATA -->
+<script id="page-views-data" type="application/json">__DATA__</script>
+
+<script>
+(() => {
+  const fmt = new Intl.NumberFormat("en-US");
+  const data = JSON.parse(document.getElementById("page-views-data").textContent);
+
+  // ---- Header / KPI strip ------------------------------------------------
+  document.getElementById("m-pages").textContent = fmt.format(data.meta.total_pages_defined);
+  document.getElementById("m-reports").textContent = fmt.format(data.meta.total_reports);
+  document.getElementById("m-ws").textContent = fmt.format(data.meta.total_workspaces);
+  document.getElementById("m-views").textContent = fmt.format(data.meta.total_views);
+  document.getElementById("m-gen").textContent = data.meta.generated_at;
+  document.getElementById("undThresh").textContent = data.meta.underused_threshold;
+
+  const reportLevelViewsApprox = data.reports.reduce((s, r) => s + r.active_users_peak * data.meta.days * 0.4, 0);
+  const kpis = [
+    { label: "Workspaces scanned", value: fmt.format(data.meta.total_workspaces) },
+    { label: "Reports", value: fmt.format(data.meta.total_reports) },
+    { label: "Pages defined", value: fmt.format(data.meta.total_pages_defined) },
+    { label: "Page views (90d)", value: fmt.format(data.meta.total_views), accent: true },
+    { label: "Underused pages", value: fmt.format(data.meta.underused_count),
+      sub: `< ${data.meta.underused_threshold} views in 90d`, warning: true },
+    { label: "Pages never viewed", value: fmt.format(data.meta.total_pages_never_viewed),
+      sub: "candidates for deprecation", warning: true },
+  ];
+  const kpiRow = document.getElementById("kpiRow");
+  kpis.forEach(k => {
+    const el = document.createElement("div");
+    el.className = "kpi" + (k.accent ? " accent" : "") + (k.warning ? " warning" : "");
+    el.innerHTML = `<div class="label">${k.label}</div><div class="value">${k.value}</div>${k.sub ? `<div class="sub">${k.sub}</div>` : ""}`;
+    kpiRow.appendChild(el);
+  });
+
+  // ---- Chart.js defaults that follow theme -------------------------------
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  function themeColors() {
+    return {
+      text: css("--cp-text"),
+      muted: css("--cp-text-muted"),
+      border: css("--cp-border"),
+      accent: css("--cp-accent"),
+      surface: css("--cp-surface"),
+      surfaceSoft: css("--cp-surface-soft"),
+      warning: css("--cp-warning"),
+      success: css("--cp-success"),
+      link: css("--cp-link"),
+    };
+  }
+  function applyChartDefaults() {
+    const c = themeColors();
+    Chart.defaults.color = c.muted;
+    Chart.defaults.borderColor = c.border;
+    Chart.defaults.font.family = '"Segoe UI", Aptos, Calibri, -apple-system, sans-serif';
+    Chart.defaults.font.size = 11;
+  }
+  applyChartDefaults();
+
+  const palette = (n) => {
+    const c = themeColors();
+    const base = [c.accent, c.link, c.success, c.warning, "#7c3aed", "#0ea5e9", "#ef4444", "#14b8a6", "#a855f7", "#22c55e", "#f97316"];
+    return Array.from({length: n}, (_, i) => base[i % base.length]);
+  };
+
+  // ---- Tab 1: daily ------------------------------------------------------
+  const dailyCtx = document.getElementById("dailyChart").getContext("2d");
+  const dailyChart = new Chart(dailyCtx, {
+    type: "line",
+    data: {
+      labels: data.daily.map(d => d.date),
+      datasets: [{
+        label: "Page views",
+        data: data.daily.map(d => d.views),
+        borderColor: themeColors().accent,
+        backgroundColor: themeColors().accent + "33",
+        fill: true,
+        tension: 0.25,
+        pointRadius: 0,
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8 }, grid: { color: themeColors().border, drawOnChartArea: false } },
+        y: { beginAtZero: true, grid: { color: themeColors().border } },
+      },
+    },
+  });
+
+  // ---- Tab 1: distribution ----------------------------------------------
+  const distCtx = document.getElementById("distChart").getContext("2d");
+  const distChart = new Chart(distCtx, {
+    type: "bar",
+    data: {
+      labels: data.distribution.map(d => d.bucket),
+      datasets: [{
+        label: "Pages",
+        data: data.distribution.map(d => d.pages),
+        backgroundColor: data.distribution.map((d, i) => i === 0 ? themeColors().danger || "#dc2626" : i <= 2 ? themeColors().warning : themeColors().accent),
+        borderRadius: 6,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, grid: { color: themeColors().border } },
+        x: { grid: { display: false } },
+      },
+    },
+  });
+
+  // ---- Tab 1: workspace bar ---------------------------------------------
+  const wsCtx = document.getElementById("wsChart").getContext("2d");
+  new Chart(wsCtx, {
+    type: "bar",
+    data: {
+      labels: data.workspaces.map(w => w.workspace_name),
+      datasets: [{
+        label: "Page views",
+        data: data.workspaces.map(w => w.total_views),
+        backgroundColor: themeColors().accent,
+        borderRadius: 6,
+      }],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { beginAtZero: true, grid: { color: themeColors().border } },
+        y: { grid: { display: false } },
+      },
+    },
+  });
+
+  // ---- Tab 1: top pages table -------------------------------------------
+  const topBody = document.querySelector("#topPagesTable tbody");
+  data.top_pages.slice(0, 15).forEach(p => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${p.workspace_name}</td><td>${p.report_name}</td><td>${p.page_name}</td><td class="num">${fmt.format(p.views)}</td>`;
+    topBody.appendChild(tr);
+  });
+
+  // ---- Tab 2: report drilldown ------------------------------------------
+  const picker = document.getElementById("reportPicker");
+  const groupedByWs = {};
+  data.reports.forEach(r => {
+    (groupedByWs[r.workspace_name] = groupedByWs[r.workspace_name] || []).push(r);
+  });
+  Object.entries(groupedByWs).sort().forEach(([ws, reps]) => {
+    const og = document.createElement("optgroup");
+    og.label = ws;
+    reps.sort((a, b) => a.report_name.localeCompare(b.report_name)).forEach(r => {
+      const o = document.createElement("option");
+      o.value = r.report_id;
+      o.textContent = `${r.report_name} (${r.total_pages} pages)`;
+      og.appendChild(o);
+    });
+    picker.appendChild(og);
+  });
+
+  let personaChart;
+  function renderReport(reportId, filter = "") {
+    const r = data.reports.find(x => x.report_id === reportId);
+    if (!r) return;
+    const summary = document.getElementById("reportSummary");
+    const reportLevelOnly = r.active_users_peak;
+    summary.innerHTML = `
+      <div class="stat"><div class="l">Workspace</div><div class="v">${r.workspace_name}</div></div>
+      <div class="stat"><div class="l">Capacity</div><div class="v" style="font-size:14px">${r.capacity_name}</div></div>
+      <div class="stat"><div class="l">Pages</div><div class="v">${r.total_pages}</div></div>
+      <div class="stat accent"><div class="l">Page views (90d)</div><div class="v">${fmt.format(r.total_views)}</div></div>
+      <div class="stat warn"><div class="l">Pages never viewed</div><div class="v">${r.pages_never_viewed}</div></div>
+      <div class="stat"><div class="l">Avg views/page</div><div class="v">${fmt.format(Math.round(r.total_views / Math.max(r.total_pages, 1)))}</div></div>
+    `;
+
+    const pages = r.pages
+      .filter(p => !filter || p.page_name.toLowerCase().includes(filter.toLowerCase()))
+      .slice().sort((a, b) => b.views - a.views);
+    const max = pages.reduce((m, p) => Math.max(m, p.views), 1);
+    const bars = document.getElementById("pageBars");
+    bars.innerHTML = "";
+    pages.forEach(p => {
+      const pct = Math.max(1, (p.views / max) * 100);
+      const row = document.createElement("div");
+      row.className = "page-bar" + (p.views === 0 ? " zero" : "");
+      row.innerHTML = `
+        <div class="ord">${p.page_ordinal}</div>
+        <div>
+          <div class="name" title="${p.page_name}">${p.page_name}</div>
+          <div class="bar-wrap"><div class="bar" style="width:${pct}%"></div></div>
+        </div>
+        <div class="views">${fmt.format(p.views)}</div>
+      `;
+      bars.appendChild(row);
+    });
+
+    if (personaChart) personaChart.destroy();
+    const personaCtx = document.getElementById("personaChart").getContext("2d");
+    personaChart = new Chart(personaCtx, {
+      type: "doughnut",
+      data: {
+        labels: r.personas.map(p => p.persona),
+        datasets: [{ data: r.personas.map(p => p.views), backgroundColor: palette(r.personas.length), borderWidth: 0 }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        cutout: "55%",
+        plugins: { legend: { position: "right", labels: { boxWidth: 10 } } },
+      },
+    });
+  }
+
+  picker.addEventListener("change", () => renderReport(picker.value, document.getElementById("pageFilter").value));
+  document.getElementById("pageFilter").addEventListener("input", (e) => renderReport(picker.value, e.target.value));
+
+  // Default selection: longest clinical report (most dramatic story)
+  const defaultReport = data.reports.slice().sort((a, b) => b.total_pages - a.total_pages)[0];
+  picker.value = defaultReport.report_id;
+  renderReport(defaultReport.report_id);
+
+  // ---- Tab 3: underused -------------------------------------------------
+  const undBody = document.querySelector("#underusedTable tbody");
+  data.underused_pages.forEach(p => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${p.workspace_name}</td><td>${p.report_name}</td><td>${p.page_name}</td><td class="num">${fmt.format(p.views)}</td>`;
+    undBody.appendChild(tr);
+  });
+
+  // ---- Tabs -------------------------------------------------------------
+  document.querySelectorAll(".tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+    });
+  });
+
+  // ---- Theme toggle -----------------------------------------------------
+  document.getElementById("themeToggle").addEventListener("click", () => {
+    const cur = document.documentElement.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    // Re-apply chart theme + re-render line chart background fill
+    applyChartDefaults();
+    dailyChart.data.datasets[0].borderColor = themeColors().accent;
+    dailyChart.data.datasets[0].backgroundColor = themeColors().accent + "33";
+    dailyChart.update();
+    distChart.update();
+  });
+})();
+</script>
+</body>
+</html>

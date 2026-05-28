@@ -1,0 +1,8 @@
+# Runtime deps for the collector.
+# In --mock mode none of these are strictly required (the script falls back
+# to the stdlib csv module), but they are needed for live tenant collection.
+requests>=2.31
+# XMLA access via the Microsoft ADOMD client. On Windows install the
+# Microsoft.AnalysisServices.AdomdClient.retail.amd64 NuGet package first,
+# then `pip install pyadomd` from the ML Server image or local wheel.
+# pyadomd>=0.1.1; sys_platform == "win32"

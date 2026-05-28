@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+.python-version
+
+# Collector output (reproducible by `python collector.py --mock`)
+etl/out/
+
+# Local IDE / OS noise
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Dashboard preview screenshots (regenerated on demand)
+dashboard/_preview_*.png
+dashboard/architecture_preview.png
+
+# Secrets — should never be committed
+.env
+*.env
+*.pem
+*.key

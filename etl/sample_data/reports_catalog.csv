@@ -1,0 +1,232 @@
+workspace_id,workspace_name,report_id,report_name,page_id,page_name,page_ordinal,report_total_pages
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p000,STUDY-101 — Study Overview,1,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p001,STUDY-101 — Enrollment Funnel,2,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p002,STUDY-101 — Site Performance,3,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p003,STUDY-101 — Screen Fail Reasons,4,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p004,STUDY-101 — Protocol Deviations,5,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p005,STUDY-101 — Adverse Events Summary,6,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p006,STUDY-101 — Serious Adverse Events,7,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p007,STUDY-101 — SUSAR Tracking,8,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p008,STUDY-101 — Concomitant Medications,9,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p009,STUDY-101 — Lab Out-of-Range,10,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p010,STUDY-101 — Vital Signs Trends,11,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p011,STUDY-101 — ECG Findings,12,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p012,STUDY-101 — Pharmacokinetics,13,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p013,STUDY-101 — Dose Modifications,14,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p014,STUDY-101 — Discontinuations,15,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p015,STUDY-101 — Demographics,16,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p016,STUDY-101 — Baseline Characteristics,17,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p017,STUDY-101 — Patient Disposition,18,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p018,STUDY-101 — Cohort Comparison,19,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p019,STUDY-101 — Efficacy Primary Endpoint,20,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p020,STUDY-101 — Efficacy Secondary Endpoints,21,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p021,STUDY-101 — Tumor Response (RECIST),22,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p022,STUDY-101 — Survival Curves,23,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p023,STUDY-101 — Biomarker Analysis,24,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p024,STUDY-101 — Genomic Signatures,25,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p025,STUDY-101 — PK/PD Modeling,26,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p026,STUDY-101 — Exposure-Response,27,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p027,STUDY-101 — Data Quality Dashboard,28,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p028,STUDY-101 — Query Aging,29,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p029,STUDY-101 — Monitoring Visits,30,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p030,STUDY-101 — IMP Accountability,31,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p031,STUDY-101 — Temperature Excursions,32,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p032,STUDY-101 — Vendor SLAs,33,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p033,STUDY-101 — Country Operations,34,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p034,STUDY-101 — Recruitment Forecast,35,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p035,STUDY-101 — Enrollment vs Plan,36,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p036,STUDY-101 — Budget Burn,37,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p037,STUDY-101 — Milestone Tracker,38,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p038,STUDY-101 — Risk Register,39,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p039,STUDY-101 — Communications Log,40,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p040,STUDY-101 — Regulatory Submissions,41,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p041,STUDY-101 — IRB/EC Approvals,42,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p042,STUDY-101 — ICF Versions,43,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p043,STUDY-101 — Translator Status,44,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p044,STUDY-101 — Lab Kit Inventory,45,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p045,STUDY-101 — Sample Shipments,46,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p046,STUDY-101 — Central Lab QC,47,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p047,STUDY-101 — Imaging Read Backlog,48,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p048,STUDY-101 — IRT Drug Resupply,49,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p049,STUDY-101 — eCRF Completion,50,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p050,STUDY-101 — Source Data Verification,51,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p051,STUDY-101 — Audit Findings,52,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p052,STUDY-101 — Training Compliance,53,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p053,STUDY-101 — Investigator Brochure Updates,54,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p054,STUDY-101 — Statistical Analysis Plan,55,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p055,STUDY-101 — Interim Analysis Tracker,56,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p056,STUDY-101 — DSMB Meeting Notes,57,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p057,STUDY-101 — Closeout Activities,58,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p058,STUDY-101 — CSR Section Status,59,60
+ws-clinops,Clinical Operations,rep-clin-study101,Phase III STUDY-101 — Clinical Trial Tracking,rep-clin-study101::p059,STUDY-101 — Publication Tracker,60,60
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p000,STUDY-202 — Study Overview,1,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p001,STUDY-202 — Enrollment Funnel,2,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p002,STUDY-202 — Site Performance,3,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p003,STUDY-202 — Screen Fail Reasons,4,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p004,STUDY-202 — Protocol Deviations,5,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p005,STUDY-202 — Adverse Events Summary,6,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p006,STUDY-202 — Serious Adverse Events,7,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p007,STUDY-202 — SUSAR Tracking,8,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p008,STUDY-202 — Concomitant Medications,9,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p009,STUDY-202 — Lab Out-of-Range,10,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p010,STUDY-202 — Vital Signs Trends,11,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p011,STUDY-202 — ECG Findings,12,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p012,STUDY-202 — Pharmacokinetics,13,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p013,STUDY-202 — Dose Modifications,14,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p014,STUDY-202 — Discontinuations,15,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p015,STUDY-202 — Demographics,16,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p016,STUDY-202 — Baseline Characteristics,17,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p017,STUDY-202 — Patient Disposition,18,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p018,STUDY-202 — Cohort Comparison,19,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p019,STUDY-202 — Efficacy Primary Endpoint,20,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p020,STUDY-202 — Efficacy Secondary Endpoints,21,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p021,STUDY-202 — Tumor Response (RECIST),22,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p022,STUDY-202 — Survival Curves,23,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p023,STUDY-202 — Biomarker Analysis,24,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p024,STUDY-202 — Genomic Signatures,25,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p025,STUDY-202 — PK/PD Modeling,26,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p026,STUDY-202 — Exposure-Response,27,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p027,STUDY-202 — Data Quality Dashboard,28,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p028,STUDY-202 — Query Aging,29,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p029,STUDY-202 — Monitoring Visits,30,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p030,STUDY-202 — IMP Accountability,31,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p031,STUDY-202 — Temperature Excursions,32,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p032,STUDY-202 — Vendor SLAs,33,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p033,STUDY-202 — Country Operations,34,35
+ws-clinops,Clinical Operations,rep-clin-study202,Phase II STUDY-202 — Safety Review,rep-clin-study202::p034,STUDY-202 — Recruitment Forecast,35,35
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p000,STUDY-303 — Study Overview,1,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p001,STUDY-303 — Enrollment Funnel,2,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p002,STUDY-303 — Site Performance,3,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p003,STUDY-303 — Screen Fail Reasons,4,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p004,STUDY-303 — Protocol Deviations,5,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p005,STUDY-303 — Adverse Events Summary,6,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p006,STUDY-303 — Serious Adverse Events,7,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p007,STUDY-303 — SUSAR Tracking,8,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p008,STUDY-303 — Concomitant Medications,9,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p009,STUDY-303 — Lab Out-of-Range,10,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p010,STUDY-303 — Vital Signs Trends,11,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p011,STUDY-303 — ECG Findings,12,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p012,STUDY-303 — Pharmacokinetics,13,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p013,STUDY-303 — Dose Modifications,14,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p014,STUDY-303 — Discontinuations,15,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p015,STUDY-303 — Demographics,16,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p016,STUDY-303 — Baseline Characteristics,17,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p017,STUDY-303 — Patient Disposition,18,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p018,STUDY-303 — Cohort Comparison,19,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p019,STUDY-303 — Efficacy Primary Endpoint,20,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p020,STUDY-303 — Efficacy Secondary Endpoints,21,22
+ws-clinops,Clinical Operations,rep-clin-study303,Phase I STUDY-303 — Dose Escalation,rep-clin-study303::p021,STUDY-303 — Tumor Response (RECIST),22,22
+ws-clinops,Clinical Operations,rep-clin-portfolio,Clinical Portfolio — Executive Summary,rep-clin-portfolio::p000,Portfolio Heatmap,1,8
+ws-clinops,Clinical Operations,rep-clin-portfolio,Clinical Portfolio — Executive Summary,rep-clin-portfolio::p001,Milestones at Risk,2,8
+ws-clinops,Clinical Operations,rep-clin-portfolio,Clinical Portfolio — Executive Summary,rep-clin-portfolio::p002,Enrollment Forecast,3,8
+ws-clinops,Clinical Operations,rep-clin-portfolio,Clinical Portfolio — Executive Summary,rep-clin-portfolio::p003,Spend vs Budget,4,8
+ws-clinops,Clinical Operations,rep-clin-portfolio,Clinical Portfolio — Executive Summary,rep-clin-portfolio::p004,Pipeline Map,5,8
+ws-clinops,Clinical Operations,rep-clin-portfolio,Clinical Portfolio — Executive Summary,rep-clin-portfolio::p005,Site Geography,6,8
+ws-clinops,Clinical Operations,rep-clin-portfolio,Clinical Portfolio — Executive Summary,rep-clin-portfolio::p006,Risks & Mitigations,7,8
+ws-clinops,Clinical Operations,rep-clin-portfolio,Clinical Portfolio — Executive Summary,rep-clin-portfolio::p007,Next 90 Days,8,8
+ws-medaffairs,Medical Affairs,rep-med-kol,KOL Engagement Tracker,rep-med-kol::p000,KOL Overview,1,9
+ws-medaffairs,Medical Affairs,rep-med-kol,KOL Engagement Tracker,rep-med-kol::p001,Engagement Heatmap,2,9
+ws-medaffairs,Medical Affairs,rep-med-kol,KOL Engagement Tracker,rep-med-kol::p002,Speaker Bureau Activity,3,9
+ws-medaffairs,Medical Affairs,rep-med-kol,KOL Engagement Tracker,rep-med-kol::p003,Publication Co-Authoring,4,9
+ws-medaffairs,Medical Affairs,rep-med-kol,KOL Engagement Tracker,rep-med-kol::p004,Advisory Board Topics,5,9
+ws-medaffairs,Medical Affairs,rep-med-kol,KOL Engagement Tracker,rep-med-kol::p005,MSL Activity by Region,6,9
+ws-medaffairs,Medical Affairs,rep-med-kol,KOL Engagement Tracker,rep-med-kol::p006,Tier 1 KOL Profiles,7,9
+ws-medaffairs,Medical Affairs,rep-med-kol,KOL Engagement Tracker,rep-med-kol::p007,Sentiment Analysis,8,9
+ws-medaffairs,Medical Affairs,rep-med-kol,KOL Engagement Tracker,rep-med-kol::p008,Conference Attendance,9,9
+ws-medaffairs,Medical Affairs,rep-med-pub,Publications & Evidence Generation,rep-med-pub::p000,Pipeline Publications,1,8
+ws-medaffairs,Medical Affairs,rep-med-pub,Publications & Evidence Generation,rep-med-pub::p001,Journal Acceptance Rates,2,8
+ws-medaffairs,Medical Affairs,rep-med-pub,Publications & Evidence Generation,rep-med-pub::p002,Time-to-Publication,3,8
+ws-medaffairs,Medical Affairs,rep-med-pub,Publications & Evidence Generation,rep-med-pub::p003,Co-Author Networks,4,8
+ws-medaffairs,Medical Affairs,rep-med-pub,Publications & Evidence Generation,rep-med-pub::p004,Citation Impact,5,8
+ws-medaffairs,Medical Affairs,rep-med-pub,Publications & Evidence Generation,rep-med-pub::p005,RWE Manuscripts,6,8
+ws-medaffairs,Medical Affairs,rep-med-pub,Publications & Evidence Generation,rep-med-pub::p006,Conference Abstracts Pending,7,8
+ws-medaffairs,Medical Affairs,rep-med-pub,Publications & Evidence Generation,rep-med-pub::p007,Plain Language Summaries,8,8
+ws-medaffairs,Medical Affairs,rep-med-msl,MSL Field Activity,rep-med-msl::p000,MSL Coverage Map,1,6
+ws-medaffairs,Medical Affairs,rep-med-msl,MSL Field Activity,rep-med-msl::p001,Interaction Volume by Therapeutic Area,2,6
+ws-medaffairs,Medical Affairs,rep-med-msl,MSL Field Activity,rep-med-msl::p002,Scientific Inquiries,3,6
+ws-medaffairs,Medical Affairs,rep-med-msl,MSL Field Activity,rep-med-msl::p003,Insight Themes,4,6
+ws-medaffairs,Medical Affairs,rep-med-msl,MSL Field Activity,rep-med-msl::p004,Training Status,5,6
+ws-medaffairs,Medical Affairs,rep-med-msl,MSL Field Activity,rep-med-msl::p005,Territory Workload Balance,6,6
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p000,Cohort Builder,1,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p001,Demographics,2,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p002,Comorbidity Profile,3,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p003,Line-of-Therapy Patterns,4,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p004,Time-to-Next-Treatment,5,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p005,Overall Survival (KM),6,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p006,Real-World Response,7,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p007,Adverse Event Rates,8,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p008,Healthcare Resource Utilization,9,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p009,Cost of Care,10,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p010,Site of Care Trends,11,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p011,Geographic Disparities,12,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p012,Insurance Coverage Mix,13,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p013,SDoH Overlay,14,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p014,Biomarker Prevalence,15,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p015,Genomic Subtypes,16,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p016,Treatment Sequencing,17,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p017,Switching Patterns,18,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p018,Discontinuation Reasons,19,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p019,Subgroup Analyses,20,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p020,Forest Plot Builder,21,22
+ws-rwe,Real World Evidence,rep-rwe-onc,Real-World Evidence — Oncology Cohorts,rep-rwe-onc::p021,Sensitivity Analyses,22,22
+ws-rwe,Real World Evidence,rep-rwe-immuno,Real-World Evidence — Immunology,rep-rwe-immuno::p000,Cohort Builder,1,12
+ws-rwe,Real World Evidence,rep-rwe-immuno,Real-World Evidence — Immunology,rep-rwe-immuno::p001,Disease Severity,2,12
+ws-rwe,Real World Evidence,rep-rwe-immuno,Real-World Evidence — Immunology,rep-rwe-immuno::p002,Biologic Switching,3,12
+ws-rwe,Real World Evidence,rep-rwe-immuno,Real-World Evidence — Immunology,rep-rwe-immuno::p003,Persistence Curves,4,12
+ws-rwe,Real World Evidence,rep-rwe-immuno,Real-World Evidence — Immunology,rep-rwe-immuno::p004,Flare Rates,5,12
+ws-rwe,Real World Evidence,rep-rwe-immuno,Real-World Evidence — Immunology,rep-rwe-immuno::p005,PRO Trajectories,6,12
+ws-rwe,Real World Evidence,rep-rwe-immuno,Real-World Evidence — Immunology,rep-rwe-immuno::p006,Comorbidity Burden,7,12
+ws-rwe,Real World Evidence,rep-rwe-immuno,Real-World Evidence — Immunology,rep-rwe-immuno::p007,Healthcare Costs,8,12
+ws-rwe,Real World Evidence,rep-rwe-immuno,Real-World Evidence — Immunology,rep-rwe-immuno::p008,Specialty Distribution,9,12
+ws-rwe,Real World Evidence,rep-rwe-immuno,Real-World Evidence — Immunology,rep-rwe-immuno::p009,Geographic Heatmap,10,12
+ws-rwe,Real World Evidence,rep-rwe-immuno,Real-World Evidence — Immunology,rep-rwe-immuno::p010,Subgroup Analyses,11,12
+ws-rwe,Real World Evidence,rep-rwe-immuno,Real-World Evidence — Immunology,rep-rwe-immuno::p011,Sensitivity Analyses,12,12
+ws-rwe,Real World Evidence,rep-rwe-claims,Claims Data Quality Monitor,rep-rwe-claims::p000,Freshness,1,6
+ws-rwe,Real World Evidence,rep-rwe-claims,Claims Data Quality Monitor,rep-rwe-claims::p001,Coverage by Payer,2,6
+ws-rwe,Real World Evidence,rep-rwe-claims,Claims Data Quality Monitor,rep-rwe-claims::p002,ICD-10 Drift,3,6
+ws-rwe,Real World Evidence,rep-rwe-claims,Claims Data Quality Monitor,rep-rwe-claims::p003,NDC Mapping Issues,4,6
+ws-rwe,Real World Evidence,rep-rwe-claims,Claims Data Quality Monitor,rep-rwe-claims::p004,Outlier Claims,5,6
+ws-rwe,Real World Evidence,rep-rwe-claims,Claims Data Quality Monitor,rep-rwe-claims::p005,Backfill Backlog,6,6
+ws-commercial,Commercial Analytics,rep-com-launch,Launch Performance — PRODUCT-A,rep-com-launch::p000,Launch Scorecard,1,12
+ws-commercial,Commercial Analytics,rep-com-launch,Launch Performance — PRODUCT-A,rep-com-launch::p001,Weekly TRx/NRx,2,12
+ws-commercial,Commercial Analytics,rep-com-launch,Launch Performance — PRODUCT-A,rep-com-launch::p002,Payer Mix,3,12
+ws-commercial,Commercial Analytics,rep-com-launch,Launch Performance — PRODUCT-A,rep-com-launch::p003,Prior Auth Funnel,4,12
+ws-commercial,Commercial Analytics,rep-com-launch,Launch Performance — PRODUCT-A,rep-com-launch::p004,Specialty Pharmacy Pull-Through,5,12
+ws-commercial,Commercial Analytics,rep-com-launch,Launch Performance — PRODUCT-A,rep-com-launch::p005,Field Force Effectiveness,6,12
+ws-commercial,Commercial Analytics,rep-com-launch,Launch Performance — PRODUCT-A,rep-com-launch::p006,Speaker Programs ROI,7,12
+ws-commercial,Commercial Analytics,rep-com-launch,Launch Performance — PRODUCT-A,rep-com-launch::p007,Sample Distribution,8,12
+ws-commercial,Commercial Analytics,rep-com-launch,Launch Performance — PRODUCT-A,rep-com-launch::p008,Digital Engagement,9,12
+ws-commercial,Commercial Analytics,rep-com-launch,Launch Performance — PRODUCT-A,rep-com-launch::p009,Patient Hub Enrollment,10,12
+ws-commercial,Commercial Analytics,rep-com-launch,Launch Performance — PRODUCT-A,rep-com-launch::p010,Competitive Share,11,12
+ws-commercial,Commercial Analytics,rep-com-launch,Launch Performance — PRODUCT-A,rep-com-launch::p011,Forecast vs Actual,12,12
+ws-commercial,Commercial Analytics,rep-com-payer,Payer Access & Coverage,rep-com-payer::p000,National Formulary Status,1,8
+ws-commercial,Commercial Analytics,rep-com-payer,Payer Access & Coverage,rep-com-payer::p001,Regional Plan Detail,2,8
+ws-commercial,Commercial Analytics,rep-com-payer,Payer Access & Coverage,rep-com-payer::p002,PBM Rebate Performance,3,8
+ws-commercial,Commercial Analytics,rep-com-payer,Payer Access & Coverage,rep-com-payer::p003,GTN Walk,4,8
+ws-commercial,Commercial Analytics,rep-com-payer,Payer Access & Coverage,rep-com-payer::p004,ASP Tracking,5,8
+ws-commercial,Commercial Analytics,rep-com-payer,Payer Access & Coverage,rep-com-payer::p005,Patient Out-of-Pocket Distribution,6,8
+ws-commercial,Commercial Analytics,rep-com-payer,Payer Access & Coverage,rep-com-payer::p006,340B Volume,7,8
+ws-commercial,Commercial Analytics,rep-com-payer,Payer Access & Coverage,rep-com-payer::p007,Government Channel Mix,8,8
+ws-commercial,Commercial Analytics,rep-com-field,Field Force Daily,rep-com-field::p000,My Territory,1,6
+ws-commercial,Commercial Analytics,rep-com-field,Field Force Daily,rep-com-field::p001,Call Plan vs Actual,2,6
+ws-commercial,Commercial Analytics,rep-com-field,Field Force Daily,rep-com-field::p002,HCP Targeting,3,6
+ws-commercial,Commercial Analytics,rep-com-field,Field Force Daily,rep-com-field::p003,Sample Inventory,4,6
+ws-commercial,Commercial Analytics,rep-com-field,Field Force Daily,rep-com-field::p004,Speaker Booking Pipeline,5,6
+ws-commercial,Commercial Analytics,rep-com-field,Field Force Daily,rep-com-field::p005,Latest Approvals/Labels,6,6
+ws-mfg,Manufacturing & Supply,rep-mfg-yield,Manufacturing Yield & OEE,rep-mfg-yield::p000,Plant Overview,1,10
+ws-mfg,Manufacturing & Supply,rep-mfg-yield,Manufacturing Yield & OEE,rep-mfg-yield::p001,Line OEE,2,10
+ws-mfg,Manufacturing & Supply,rep-mfg-yield,Manufacturing Yield & OEE,rep-mfg-yield::p002,Yield by Batch,3,10
+ws-mfg,Manufacturing & Supply,rep-mfg-yield,Manufacturing Yield & OEE,rep-mfg-yield::p003,Deviations,4,10
+ws-mfg,Manufacturing & Supply,rep-mfg-yield,Manufacturing Yield & OEE,rep-mfg-yield::p004,CAPA Aging,5,10
+ws-mfg,Manufacturing & Supply,rep-mfg-yield,Manufacturing Yield & OEE,rep-mfg-yield::p005,Cycle Time,6,10
+ws-mfg,Manufacturing & Supply,rep-mfg-yield,Manufacturing Yield & OEE,rep-mfg-yield::p006,Downtime Reasons,7,10
+ws-mfg,Manufacturing & Supply,rep-mfg-yield,Manufacturing Yield & OEE,rep-mfg-yield::p007,Cleaning Validation,8,10
+ws-mfg,Manufacturing & Supply,rep-mfg-yield,Manufacturing Yield & OEE,rep-mfg-yield::p008,Stability Studies,9,10
+ws-mfg,Manufacturing & Supply,rep-mfg-yield,Manufacturing Yield & OEE,rep-mfg-yield::p009,Cold Chain Events,10,10
+ws-mfg,Manufacturing & Supply,rep-mfg-supply,Supply Chain Tower,rep-mfg-supply::p000,DC Inventory,1,7
+ws-mfg,Manufacturing & Supply,rep-mfg-supply,Supply Chain Tower,rep-mfg-supply::p001,Days of Supply,2,7
+ws-mfg,Manufacturing & Supply,rep-mfg-supply,Supply Chain Tower,rep-mfg-supply::p002,Backorder Risk,3,7
+ws-mfg,Manufacturing & Supply,rep-mfg-supply,Supply Chain Tower,rep-mfg-supply::p003,API Sourcing,4,7
+ws-mfg,Manufacturing & Supply,rep-mfg-supply,Supply Chain Tower,rep-mfg-supply::p004,CMO Performance,5,7
+ws-mfg,Manufacturing & Supply,rep-mfg-supply,Supply Chain Tower,rep-mfg-supply::p005,Shipping Lane Reliability,6,7
+ws-mfg,Manufacturing & Supply,rep-mfg-supply,Supply Chain Tower,rep-mfg-supply::p006,Tariff Impact,7,7
