@@ -1,0 +1,156 @@
+// =====================================================================
+// PageTelemetry.Measures.dax
+//
+// DAX measures for the Power BI semantic model on top of the silver
+// table loaded by PageTelemetry.Connect.pq.
+//
+// Paste into Power BI Desktop via:
+//   Model view -> New measure -> paste each measure individually.
+//
+// Or use Tabular Editor:
+//   File -> Open -> From DB -> connect to the workspace dataset,
+//   then Advanced Scripting console and run as a C# script.
+// =====================================================================
+
+
+// --------- 1. Headline KPIs ----------
+
+Total Views =
+    SUM ( 'page_views_silver'[view_count] )
+
+
+Total Page-Sessions =
+    SUM ( 'page_views_silver'[view_count] )
+
+
+Unique Pages =
+    DISTINCTCOUNT ( 'page_views_silver'[page_id] )
+
+
+Unique Reports =
+    DISTINCTCOUNT ( 'page_views_silver'[report_id] )
+
+
+Unique Workspaces =
+    DISTINCTCOUNT ( 'page_views_silver'[workspace_id] )
+
+
+Avg Dwell Seconds =
+    AVERAGEX (
+        'page_views_silver',
+        'page_views_silver'[avg_dwell_seconds]
+    )
+
+
+// --------- 2. Underused-page detection ----------
+
+% Pages Never Viewed =
+    VAR _AllPages =
+        CALCULATE (
+            DISTINCTCOUNT ( 'page_views_silver'[page_id] ),
+            ALL ( 'page_views_silver' )
+        )
+    VAR _ViewedPages =
+        CALCULATE (
+            DISTINCTCOUNT ( 'page_views_silver'[page_id] ),
+            'page_views_silver'[view_count] > 0
+        )
+    RETURN
+        DIVIDE ( _AllPages - _ViewedPages, _AllPages )
+
+
+Underused Pages =
+    // Pages whose lifetime views are <= 10 — i.e. they almost certainly
+    // shouldn't have been built. Threshold is an opinion; adjust to taste.
+    VAR _ByPage =
+        SUMMARIZE (
+            'page_views_silver',
+            'page_views_silver'[report_id],
+            'page_views_silver'[page_id],
+            "PageViews", SUM ( 'page_views_silver'[view_count] )
+        )
+    RETURN
+        COUNTROWS ( FILTER ( _ByPage, [PageViews] <= 10 ) )
+
+
+// --------- 3. Report-level rollups ----------
+
+Pages Per Report =
+    DIVIDE ( [Unique Pages], [Unique Reports] )
+
+
+Views Per Page =
+    DIVIDE ( [Total Views], [Unique Pages] )
+
+
+Top Page Share =
+    // What % of a report's traffic concentrates in its single most-viewed
+    // page? Used to flag reports that should be split.
+    VAR _ReportTotal = [Total Views]
+    VAR _TopPage =
+        MAXX (
+            SUMMARIZE (
+                'page_views_silver',
+                'page_views_silver'[page_id],
+                "Views", SUM ( 'page_views_silver'[view_count] )
+            ),
+            [Views]
+        )
+    RETURN
+        DIVIDE ( _TopPage, _ReportTotal )
+
+
+// --------- 4. Time-series ----------
+
+Views (Last 7d) =
+    VAR _Max = MAX ( 'page_views_silver'[view_date] )
+    RETURN
+        CALCULATE (
+            [Total Views],
+            'page_views_silver'[view_date] >= _Max - 6,
+            'page_views_silver'[view_date] <= _Max
+        )
+
+
+Views (Last 30d) =
+    VAR _Max = MAX ( 'page_views_silver'[view_date] )
+    RETURN
+        CALCULATE (
+            [Total Views],
+            'page_views_silver'[view_date] >= _Max - 29,
+            'page_views_silver'[view_date] <= _Max
+        )
+
+
+WoW Change % =
+    VAR _Last7  = [Views (Last 7d)]
+    VAR _Max    = MAX ( 'page_views_silver'[view_date] )
+    VAR _Prev7  =
+        CALCULATE (
+            [Total Views],
+            'page_views_silver'[view_date] >= _Max - 13,
+            'page_views_silver'[view_date] <= _Max - 7
+        )
+    RETURN
+        DIVIDE ( _Last7 - _Prev7, _Prev7 )
+
+
+// --------- 5. Capacity / cost attribution ----------
+
+Views by Capacity =
+    SUMMARIZE (
+        'page_views_silver',
+        'page_views_silver'[capacity_name],
+        "TotalViews", [Total Views]
+    )
+
+// --------- 6. Page-ordinal cliff ----------
+// Where do users stop? Useful for trimming long reports.
+
+Cumulative Views at Page Ordinal =
+    VAR _CurrentOrd = MAX ( 'page_views_silver'[page_ordinal] )
+    RETURN
+        CALCULATE (
+            [Total Views],
+            'page_views_silver'[page_ordinal] <= _CurrentOrd
+        )

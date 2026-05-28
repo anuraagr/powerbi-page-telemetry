@@ -4,7 +4,7 @@ from __future__ import annotations
 import csv
 import json
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -42,7 +42,6 @@ def aggregate() -> dict:
     dates = sorted({r["view_date"] for r in rows})
     workspaces = {r["workspace_id"]: r["workspace_name"] for r in rows}
     reports = {r["report_id"]: r for r in rows}
-    pages = {r["page_id"]: r for r in rows}
     total_views = sum(r["view_count"] for r in rows)
 
     # ---- per-workspace summary --------------------------------------------
@@ -190,7 +189,10 @@ def aggregate() -> dict:
             if lo <= v <= hi:
                 bucket_counts[i] += 1
                 break
-    distribution = [{"bucket": l, "pages": c} for l, c in zip(bucket_labels, bucket_counts)]
+    distribution = [
+        {"bucket": label, "pages": count}
+        for label, count in zip(bucket_labels, bucket_counts, strict=False)
+    ]
 
     # ---- meta header -------------------------------------------------------
     meta = {

@@ -1,0 +1,21 @@
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = [
+  "deploy/fabric-notebook/PageTelemetryCollector.Notebook.py",  # Fabric-format file uses notebookutils / spark globals
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]
+ignore = [
+  "E501",  # line length handled by formatter
+  "B008",  # default-argument calls
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # we re-order sys.path before imports
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-ra --strict-markers"

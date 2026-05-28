@@ -65,10 +65,10 @@ import os
 import shutil
 import sys
 import time
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Iterator
 
 # Force UTF-8 stdout/stderr so em-dashes and other Unicode characters in
 # log lines don't get mangled by Windows' default cp1252 console codepage.
@@ -279,7 +279,7 @@ class LiveAdapter(CollectorAdapter):
         headers: dict | None = None,
         timeout: int = 60,
         allow_status: tuple[int, ...] = (),
-    ) -> "requests.Response":
+    ) -> requests.Response:
         """HTTP with exponential backoff on 429/5xx that honors `Retry-After`.
 
         `allow_status` lists status codes that should be returned to the
@@ -570,7 +570,7 @@ class LiveAdapter(CollectorAdapter):
             cur.execute(dax)
             cols = [c.name for c in cur.description]
             for row in cur.fetchall():
-                rec = dict(zip(cols, row))
+                rec = dict(zip(cols, row, strict=False))
                 yield from self._coerce_executequeries_row(rec, dataset_id)
 
 

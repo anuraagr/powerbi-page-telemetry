@@ -11,10 +11,10 @@ import math
 import random
 import sys
 import zlib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterable
 
 # Force UTF-8 stdout so em-dashes in log lines render correctly on Windows.
 if sys.platform == "win32":

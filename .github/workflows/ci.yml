@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            etl/requirements.txt
+            tests/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r etl/requirements.txt
+          pip install -r tests/requirements.txt
+
+      - name: Lint (ruff)
+        run: ruff check etl tests deploy/azure-function/function_app.py
+
+      - name: Run tests
+        run: pytest -v --tb=short
+
+      - name: Smoke test the collector in mock mode
+        run: |
+          python etl/collector.py --mock --out /tmp/pbi-ci || python etl/collector.py --mock --out $env:TEMP/pbi-ci
+        shell: bash
+        if: runner.os != 'Windows'
+
+      - name: Smoke test the collector in mock mode (Windows)
+        if: runner.os == 'Windows'
+        run: python etl/collector.py --mock --out $env:TEMP/pbi-ci
+        shell: pwsh
+
+  validate-artifacts:
+    name: Validate deploy artifacts (JSON / PowerShell / Bash)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate JSON files
+        run: |
+          for f in $(find deploy -name "*.json"); do
+            echo "validating $f"
+            python -c "import json,sys; json.load(open(sys.argv[1]))" "$f"
+          done
+
+      - name: Validate bash scripts (set -n)
+        run: |
+          for f in deploy/azure-function/deploy.sh deploy/local/run-collector.sh; do
+            echo "validating $f"
+            bash -n "$f"
+          done
+
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          $files = @(
+            "deploy/azure-function/deploy.ps1",
+            "deploy/local/run-collector.ps1"
+          )
+          foreach ($f in $files) {
+            Write-Host "validating $f"
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $f), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) {
+              $errors | ForEach-Object { Write-Error $_ }
+              exit 1
+            }
+          }
