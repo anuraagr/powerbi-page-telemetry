@@ -39,7 +39,7 @@
 # Pin the collector release. Production should use a tagged release (e.g. v0.1.0);
 # use "main" only during development. The notebook caches the downloaded file to
 # the lakehouse so production keeps running even if GitHub is unreachable.
-COLLECTOR_REF = "v0.1.0"
+COLLECTOR_REF = "v0.2.0"
 KEYVAULT_URL  = "https://<your-keyvault>.vault.azure.net/"
 
 # Silver schema version this notebook is built for. Must match

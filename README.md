@@ -13,9 +13,15 @@
 Power BI's admin telemetry stops at the **report** grain. The
 `Get Activity Events` REST API, the Admin scanner, and the audit log all
 emit `ViewReport` events with no `Page` or `Section` field. Page-level
-data *does* exist, but only inside the per-report auto-generated
-**Usage Metrics Report v2** datasets — one dataset per report, accessible
-only by opening that report's metrics page in the browser.
+data *does* exist, but only inside the
+**Monitor Usage Metrics for Workspaces (preview)** semantic model that
+Power BI auto-provisions per workspace on the first portal click of
+`... → View usage metrics report`. There is no public REST to provision
+or query that model in bulk — confirmed by Power BI PM **David Browne**
+in the May 2026 HLS Roundtable:
+
+> *"We don't have an API, but [Monitor Usage Metrics for Workspaces]
+> builds a semantic model you can access."*
 
 For BI teams running thousands of reports — especially long
 multi-page reports (clinical trial trackers, ops scorecards, finance
@@ -36,11 +42,15 @@ today** using only documented Microsoft APIs:
 1. **`etl/collector.py`** — a Python collector that:
    - Enumerates every workspace and report via the **Power BI Admin
      REST API**.
-   - Idempotently ensures each report's **Usage Metrics v2** dataset
-     exists (`POST /admin/reports/{id}/usageMetrics`).
-   - Queries each dataset over the **XMLA read endpoint** with a single
-     parameterised DAX `SUMMARIZECOLUMNS` (server-side aggregation, only
-     summary rows transit the wire).
+   - For each workspace, looks up the **Modern Usage Metrics**
+     semantic model (auto-provisioned by Power BI on the first
+     portal click of `... → View usage metrics report`). Workspaces
+     that have never been bootstrapped are recorded in the run
+     summary so an admin can do the one-time click in bulk.
+   - Queries each per-workspace Usage Metrics model via the Power BI
+     REST `executeQueries` endpoint with a parameterised DAX
+     `CALCULATETABLE(SUMMARIZECOLUMNS(...))` (server-side aggregation,
+     pushed-down filters, only summary rows transit the wire).
    - Lands rows in a `bronze/` → `silver/` layout that drops cleanly into
      a Fabric Lakehouse, ADLS Gen2, or local disk.
    - Ships with a `MockAdapter` so you can run the whole pipeline on a
@@ -75,7 +85,8 @@ today** using only documented Microsoft APIs:
 flowchart LR
     subgraph PBI["Power BI tenant"]
         WS["Workspaces<br/>(admin REST)"]
-        UM["Usage Metrics v2<br/>per-report datasets"]
+        UM["Modern Usage Metrics<br/>(per-workspace semantic model,<br/>preview → GA Sept 2026)"]
+        Boot["One-time portal click<br/>'View usage metrics report'"]
     end
 
     subgraph Collector["etl/collector.py"]
@@ -102,6 +113,7 @@ flowchart LR
     end
 
     WS --> LA
+    Boot --> UM
     UM --> LA
     LA --> Run
     MA --> Run
@@ -155,6 +167,25 @@ python collector.py --mock --metrics prometheus
 > Requires **Python 3.10+** (the collector uses PEP 604 `X | None` type hints).
 > `requests` is the only runtime dependency; `pyadomd` is only needed for true
 > XMLA queries in live mode (see `docs/deployment-guide.md`).
+
+### One-time workspace bootstrap (live mode only — does not affect mock)
+
+The first time you use Modern Usage Metrics in a workspace, a workspace
+admin or contributor must click **once** in the Power BI portal to ask
+Power BI to provision the per-workspace semantic model:
+
+1. Open any report in the workspace
+2. Click `...` in the report header → **View usage metrics report**
+3. Close the resulting tab — you only needed to provision the model
+
+After that, Power BI accumulates page-level data for **every** report
+in the workspace into a single `Usage Metrics Report` semantic model,
+refreshed daily by Microsoft. The collector reads it with one
+`executeQueries` call per report.
+
+Workspaces that haven't been bootstrapped are skipped at runtime and
+listed in `_run_summary.json` → `workspaces_not_bootstrapped`, so an
+admin can batch-bootstrap and re-run.
 
 To run against a real tenant, see [`docs/deployment-guide.md`](docs/deployment-guide.md).
 
@@ -297,15 +328,25 @@ Three reasons:
 
 ## What about the Microsoft GA path?
 
-Microsoft has previewed **Monitor Usage Metrics for Workspaces** which
-provisions one workspace-level semantic model covering reports,
-dashboards, paginated reports, and **page-level activity** — accessible
-via the XMLA endpoint. It's not GA at the time of writing.
+The Modern Usage Metrics for Workspaces feature this collector reads
+is in **public preview** today (May 2026) and is targeting
+**GA September 2026** per Rui Romano (Power BI PM). At GA:
 
-This repo is the bridge until then, and is forward-compatible: when GA
-ships, drop in a `WorkspaceSemanticModelAdapter` (one DAX query per
-workspace instead of one per report → 10–50× less capacity load) and
-keep everything else.
+- The per-workspace semantic model and its page-level schema should
+  stabilise. The collector's `PBI_USAGE_DATASET_NAME` /
+  `DAX_PAGE_VIEWS_TEMPLATE` knobs absorb minor schema rename
+  without code changes.
+- The one-time `... → View usage metrics report` portal bootstrap may
+  become a tenant-wide toggle, removing the per-workspace click. Watch
+  the Power BI release notes.
+- Microsoft may eventually ship a public REST that does the same
+  enumeration + DAX execution this collector does. When that happens
+  this repo becomes a reference implementation of the same pattern,
+  not the only way to do it.
+
+This repo is the **bridge today** that becomes a **first-class consumer
+of the GA shape**: silver / gold schemas, the dashboard, and the
+Power BI template don't change — only the source adapter.
 
 ## Troubleshooting
 

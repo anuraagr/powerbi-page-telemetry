@@ -85,18 +85,27 @@ def test_mock_max_csv_date_is_deterministic() -> None:
 
 
 def test_dax_query_window_includes_both_endpoints() -> None:
-    """The DAX FILTER should use closed-interval comparisons (>= and <=)
-    so a 1-day window actually pulls that day."""
+    """The DAX should use closed-interval date comparisons (>= and <=)
+    so a 1-day window actually pulls that day, AND filter to a specific
+    report id so we only get rows for the report being collected."""
     from datetime import date
 
     from collector import LiveAdapter
 
     # Construct without going through __init__ so we don't need real creds.
     adapter = LiveAdapter.__new__(LiveAdapter)
-    dax = adapter._dax_with_date_filter(date(2026, 5, 27), date(2026, 5, 27))
+    dax = adapter._dax_with_filters(
+        date(2026, 5, 27),
+        date(2026, 5, 27),
+        report_id="11111111-2222-3333-4444-555555555555",
+    )
     assert "DATE(2026,5,27)" in dax
     assert "[Date] >=" in dax
     assert "[Date] <=" in dax
+    assert '[Report Id] = "11111111-2222-3333-4444-555555555555"' in dax
+    # CALCULATETABLE pushes filters down so SUMMARIZECOLUMNS only sees
+    # the report's rows; cheaper on workspaces with many reports.
+    assert "CALCULATETABLE" in dax
 
 
 @pytest.mark.parametrize("status, retryable", [

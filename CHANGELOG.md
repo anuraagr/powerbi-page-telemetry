@@ -7,7 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0]
+
+### Breaking (live mode only — mock mode, silver schema, downstream all unchanged)
+
+- **Rewrote `LiveAdapter` against the Modern Usage Metrics
+  (preview) per-workspace semantic model.** v0.1.0 attempted to call
+  `POST /admin/reports/{id}/usageMetrics` to idempotently provision a
+  per-report Usage Metrics v2 dataset; **that REST endpoint does not
+  exist in the public Power BI API** (verified against the Microsoft
+  Learn `/rest/api/power-bi/admin` surface and confirmed by Power BI
+  PM David Browne in the HLS Roundtable, May 2026). The fix:
+  enumerate workspaces via admin REST, look up each workspace's
+  `Usage Metrics Report` semantic model (auto-provisioned by Power BI
+  on the first portal click of `... → View usage metrics report`),
+  and run a filtered DAX `CALCULATETABLE(SUMMARIZECOLUMNS(...))` per
+  report via `POST /datasets/{id}/executeQueries`.
+- `LiveAdapter.ensure_usage_metrics_dataset()` now does a
+  **per-workspace** lookup (cached), returns `""` for workspaces that
+  haven't been bootstrapped, and logs a friendly warning explaining
+  the one-time portal-click prerequisite.
+- `LiveAdapter.query_page_views(...)` now takes a required
+  `report_id` kwarg so the DAX filters down at the source. Calling
+  without `report_id` raises `ValueError` (would otherwise scan an
+  entire workspace's worth of page-views).
+- `MockAdapter.query_page_views(...)` accepts and ignores the new
+  optional `report_id` kwarg for signature symmetry.
+- `_run_summary.json` now includes `workspaces_not_bootstrapped: list[str]`
+  and `reports_skipped_no_bootstrap: int` for ops visibility.
+
 ### Added
+
+- **`PBI_USAGE_DATASET_NAME`** env var — override the dataset name
+  prefix (default `Usage Metrics Report`). Set to
+  `Usage Metrics Report v2` for tenants on the legacy variant.
+- **`PBI_USE_PYADOMD`** env var — explicit opt-in to the
+  pyadomd / XMLA query path. Previously implicit on pyadomd presence,
+  now explicit so the default REST path is deterministic across
+  environments where pyadomd happens to be installed.
+- **`PBI_MOCK`** env var — env-var equivalent of `--mock` so
+  containerized deploys (Azure Function, Container Apps) can be
+  smoke-tested with no credentials before being cut over to live mode.
+- **`PBI_SAMPLE_CSV`** env var — explicit override for the bundled
+  sample CSV's location, used by containerized deploys where
+  `collector.py` is vendored away from its `sample_data/` folder.
+- **Robust sample-CSV path resolver** — `MockAdapter` now searches
+  several candidate paths (next to `collector.py`, repo `etl/`, two
+  levels up for `deploy/<option>/collector.py`). Fixes mock mode
+  inside the Azure Function deploy where `deploy.ps1` / `deploy.sh`
+  copy `collector.py` into the Function root.
+- **`--mock` / `-Mock` switches** on the local deploy wrappers
+  (`run-collector.sh` / `run-collector.ps1`) so evaluators can test
+  the full deployment without Power BI credentials.
+- **`.gitattributes`** forcing LF line endings on shell scripts,
+  systemd units, and YAML/JSON. Fixes a real bug where Windows-cloned
+  copies of the repo couldn't run the bash wrappers on Linux.
+- **`python3` fallback** in `run-collector.sh` (prefers `python3`,
+  falls back to `python`). Ubuntu 22.04+ ships `python3` without a
+  `python` symlink, which previously broke the bash wrapper there.
+- **`tests/test_live_adapter.py`** — 6 new tests covering the new
+  per-workspace lookup, executeQueries body shape, cached lookup,
+  empty-dataset-id noop, `report_id`-required guard, and end-to-end
+  run() summary accounting.
+
+### Fixed
+
+- `_run_summary.json["datasets"]` now counts **unique discovered
+  datasets** (= unique bootstrapped workspaces) rather than once per
+  report. Two reports in the same workspace no longer double-count
+  the workspace's UM dataset.
+
+### Documentation
+
+- Rewrote `docs/api-reference.md` §2-§8 against the per-workspace
+  Modern Usage Metrics model. Added the David Browne quote and the
+  one-time portal-bootstrap prerequisite prominently in §2-§3.
+- Added the bootstrap prereq to `docs/deployment-guide.md §0` and a
+  new dedicated §1a "(HISTORICAL) Why v0.1.0's POST endpoint didn't
+  exist" callout in `docs/design.md`.
+- New `docs/runbook.md §H` "workspaces_not_bootstrapped listed"
+  scenario with bulk-bootstrap guidance and the
+  `PBI_USAGE_DATASET_NAME` legacy override.
+- README now opens with the David Browne quote, makes the bootstrap
+  prereq part of the quick start, and updates the Mermaid diagram to
+  reflect the per-workspace model.
+
+### Added (from previous Unreleased)
 
 - **Tier 3 polish:**
   - Mermaid architecture diagram inline in README (renders on GitHub),
@@ -95,4 +180,5 @@ options + offline demo + customer-readiness pass.
   underused — fully deterministic CRC32-seeded generator
 
 [0.1.0]: https://github.com/anuraagr/powerbi-page-telemetry/releases/tag/v0.1.0
-[Unreleased]: https://github.com/anuraagr/powerbi-page-telemetry/compare/v0.1.0...HEAD
+[0.2.0]: https://github.com/anuraagr/powerbi-page-telemetry/releases/tag/v0.2.0
+[Unreleased]: https://github.com/anuraagr/powerbi-page-telemetry/compare/v0.2.0...HEAD

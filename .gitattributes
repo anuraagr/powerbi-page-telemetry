@@ -1,0 +1,19 @@
+# Force Unix LF line endings on shell scripts and other files where Windows
+# CRLF would break execution on the target platform (bash, systemd, etc.).
+*.sh           text eol=lf
+*.service      text eol=lf
+*.timer        text eol=lf
+
+# Render Python / YAML / JSON normalized but tolerant of LF on all platforms.
+*.py           text eol=lf
+*.yml          text eol=lf
+*.yaml         text eol=lf
+*.json         text eol=lf
+*.md           text eol=lf
+
+# Binary assets: prevent any normalization.
+*.png          binary
+*.jpg          binary
+*.pbix         binary
+*.pbit         binary
+*.xlsx         binary

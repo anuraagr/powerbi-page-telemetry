@@ -7,11 +7,23 @@ report" in your tenant.
 
 | Item | Why | Where to check |
 | --- | --- | --- |
-| Power BI tenant with Fabric capacity (F-SKU) or Premium P-SKU | XMLA read endpoint and Usage Metrics v2 both require it | Admin Portal → Capacity settings |
+| Power BI tenant with Fabric capacity (F-SKU) or Premium P-SKU | XMLA read endpoint and Modern Usage Metrics both require it | Admin Portal → Capacity settings |
 | `Service principals can use Power BI APIs` tenant setting **enabled** for a security group | Required for unattended REST calls | Admin Portal → Tenant settings → Developer settings |
 | `XMLA endpoint` set to **Read** or **Read Write** on the target capacity | Required to query Usage Metrics datasets without scraping the UI | Admin Portal → Capacity settings → Power BI workloads |
+| **Workspaces bootstrapped for Modern Usage Metrics (one-time)** | The Usage Metrics semantic model is created lazily on the first portal click; the collector can't provision it via REST | Open each workspace → any report → `...` → **View usage metrics report** (once) |
 | Audit logs retained ≥ 90 days | Backstop for cross-check; not strictly required | M365 Purview |
 | Workspace tagging convention | RLS later filters by owning BU | Your BI ops team |
+
+> **About the workspace bootstrap step:** Power BI provisions one
+> `Usage Metrics Report` semantic model per workspace, on the first
+> portal click of `... → View usage metrics report` on any report in
+> that workspace. There is **no public REST endpoint** to do this in
+> bulk — confirmed by Power BI PM David Browne in the May 2026 HLS
+> Roundtable. After bootstrapping, that one model captures page-level
+> data for **every** report in the workspace, refreshed daily by
+> Microsoft. Run the collector first and check
+> `_run_summary.json → workspaces_not_bootstrapped` for the list of
+> workspaces still needing the click.
 
 ## 1. Identity setup
 

@@ -38,6 +38,7 @@ SEV-2 / SEV-1 trivial to alert on — see
 | `reports` much smaller than yesterday | Workspace scope changed, or admin permission scoped tighter | [§B](#b-fewer-reports-than-yesterday) |
 | `len(errors)` is high, mostly `HTTP 429` | Throttle storm — the retry helper exhausted | [§C](#c-many-429s) |
 | `len(errors)` is high, mostly `XmlaTokenError` / `InvalidRequest` | XMLA endpoint disabled on a capacity, OR SP not in workspace | [§D](#d-xmla-or-executequeries-401403) |
+| `workspaces_not_bootstrapped` is non-empty | Those workspaces have never had `... → View usage metrics report` clicked once | [§H](#h-workspaces_not_bootstrapped-listed) |
 | Function host never started — opaque "Worker failed to function index" | Missing `collector.py` next to `function_app.py` | [§E](#e-function-app-wont-start) |
 | Fabric notebook fails at the schema-version assertion | `EXPECTED_SCHEMA_VERSION` drift | [§F](#f-fabric-schema-version-assertion-failed) |
 | Data is stale but the run reports success | Run is "succeeding" against the wrong workspace scope (e.g. SP lost group membership) | [§G](#g-stale-data-despite-success) |
@@ -122,9 +123,54 @@ app settings.
 2. **Workspace membership**: the SP must be a workspace **Member** or
    **Admin** (not just have admin REST access). XMLA / executeQueries
    are workspace-scoped, not tenant-scoped.
-3. **Dataset doesn't exist**: the collector tries to create it via
-   `POST /admin/reports/{id}/usageMetrics`. If that itself fails with
-   403, the SP doesn't have admin REST API access; see §A.
+3. **Dataset doesn't exist**: see §H — the workspace has never had
+   the one-time `... → View usage metrics report` portal click, so the
+   Modern Usage Metrics semantic model was never provisioned. There
+   is no public REST to provision it.
+
+## H. `workspaces_not_bootstrapped` listed
+
+Symptom: `_run_summary.json` shows e.g.
+`"workspaces_not_bootstrapped": ["Clinical Operations", "Sales NA"]`
+and `reports_skipped_no_bootstrap > 0`. Those workspaces are returning
+zero page-view rows from the collector.
+
+**Cause:** The Modern Usage Metrics (preview) semantic model is created
+lazily on the first portal click of `... → View usage metrics report`
+on any report in a workspace. There is **no public REST API** that
+does this provisioning — confirmed by Power BI PM David Browne (HLS
+Roundtable, May 2026). Workspaces that have never been bootstrapped
+have no `Usage Metrics Report` semantic model for the collector to
+read.
+
+**Fix (one workspace at a time, or in bulk):**
+
+1. Have a workspace admin or contributor open any report in the
+   workspace.
+2. Click the `...` menu in the report header.
+3. Click **View usage metrics report**.
+4. Wait ~5 seconds while Power BI provisions the semantic model.
+5. Close the resulting tab — you only needed the provisioning side
+   effect.
+
+After the click, the next collector run will pick the workspace up
+automatically. The model accumulates **page-level data for every
+report** in the workspace from that point forward; previously-collected
+data does not back-fill (the Usage Metrics models cover the last 30
+days going forward from creation).
+
+**Tenant-wide bulk bootstrap:** if you have dozens of workspaces, a
+governance script can iterate every workspace via the admin REST API
+and post a one-time `View usage metrics report` portal request per
+workspace using a workspace contributor's delegated token. See
+`docs/api-reference.md §3` for the per-workspace bootstrap details
+and tenant-scope caveats.
+
+**Legacy variant**: if a tenant has the older `Usage Metrics Report
+v2 - <reportname>` per-report model instead of the modern
+workspace-level one, set the env var
+`PBI_USAGE_DATASET_NAME=Usage Metrics Report v2` and the collector's
+prefix-match will pick it up without code changes.
 
 ## E. Function App won't start
 

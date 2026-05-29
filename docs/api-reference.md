@@ -26,10 +26,19 @@ REST and XMLA (XMLA accepts the same token via `Password=` when the
 | --- | --- | --- |
 | `GET /v1.0/myorg/admin/groups?$top=100&$skip={n}&$filter=type eq 'Workspace' and state eq 'Active'` | List workspaces | 200 req/h tenant-wide |
 | `GET /v1.0/myorg/admin/groups/{wsId}/reports` | List reports in a workspace | shared bucket |
-| `POST /v1.0/myorg/admin/reports/{reportId}/usageMetrics` | Ensure Usage Metrics v2 dataset exists; returns `datasetId` | shared bucket |
-| `GET /v1.0/myorg/admin/groups/{wsId}/datasets` | Find Usage Metrics dataset id if POST returned 409 | shared bucket |
+| `GET /v1.0/myorg/admin/groups/{wsId}/datasets` | Find the per-workspace **Modern Usage Metrics** semantic model | shared bucket |
 | `POST /v1.0/myorg/groups/{wsId}/datasets/{dsId}/executeQueries` | Execute DAX against the Usage Metrics dataset (REST path, no DLLs) | 120 req/min per user |
 | `GET /v1.0/myorg/admin/capacities` | (optional) Map workspaces → capacities for tier-of-service reporting | shared bucket |
+
+> **There is no public REST endpoint that provisions the Usage Metrics
+> dataset.** This is confirmed by Power BI PM David Browne (HLS
+> Roundtable, May 2026): *"We don't have an API, but
+> [Monitor Usage Metrics for Workspaces (preview)] builds a semantic
+> model you can access."* The semantic model is created lazily on the
+> **first portal click** of `...` → `View usage metrics report` in a
+> workspace — see §3 below. Workspaces that have never been
+> bootstrapped surface as `workspaces_not_bootstrapped` in
+> `_run_summary.json` and are skipped.
 
 All admin endpoints require the service principal to be a **Fabric
 Administrator** OR to be in a security group enabled for `Read-only
@@ -57,10 +66,38 @@ event is the finest grain available:
 }
 ```
 
-→ no `Page` or `Section` field. That's why this collector goes via XMLA
-on the Usage Metrics dataset instead.
+→ no `Page` or `Section` field. That's why this collector goes via the
+per-workspace Usage Metrics semantic model instead.
 
-## 3. DAX execution endpoint
+## 3. The one-time workspace bootstrap (no public REST)
+
+For each workspace whose reports you want page-level telemetry for, an
+admin or workspace contributor must do this **once**, by hand, in the
+Power BI portal:
+
+1. Open any report in the workspace.
+2. Click the `...` menu in the report header.
+3. Click **View usage metrics report**.
+4. Wait ~5 seconds while Power BI provisions a semantic model named
+   **`Usage Metrics Report`** in the workspace. The portal will then
+   redirect to the auto-generated usage report — you can close that tab.
+
+After step 4, Power BI accumulates page-level data for **every**
+report in the workspace into that one semantic model, refreshed every
+~24h by Microsoft. The collector reads that one model per workspace
+via `executeQueries` (§4).
+
+The Power BI engineering team's roadmap confirms this preview feature
+is targeting **GA in September 2026** (per Rui Romano, HLS Roundtable
+May 2026). After GA there will still be no public REST to provision
+the model — the one-time portal click remains the prerequisite.
+
+If a tenant has the legacy variant of this dataset (named
+`Usage Metrics Report v2 - <reportname>`), set
+`PBI_USAGE_DATASET_NAME=Usage Metrics Report v2` and the collector's
+prefix-match will pick it up.
+
+## 4. DAX execution endpoint
 
 The collector executes DAX two possible ways. By default it uses the **REST
 endpoint**, which has zero native dependencies and works identically from
@@ -105,67 +142,86 @@ Requires:
 - Windows host (ADOMD.NET is Windows-only). For non-Windows runtimes,
   stick with the REST path.
 
-## 4. The DAX query
+## 5. The DAX query
 
-Run this against the Usage Metrics dataset for each report. It uses
-server-side `SUMMARIZECOLUMNS` so only the aggregated rows traverse the
-wire — works fine for high-cardinality datasets.
+Run this against the per-workspace Usage Metrics semantic model, once
+per report you want page-level telemetry for. `CALCULATETABLE` pushes
+the report-id and date filters down **before** aggregation — cheaper
+than filtering after `SUMMARIZECOLUMNS` on workspaces with many
+reports.
 
 ```dax
 EVALUATE
-SUMMARIZECOLUMNS(
-    'Report page views'[Report Id],
-    'Report page views'[Report page name],
-    'Report page views'[Date],
-    "Views",          SUM('Report page views'[Views]),
-    "UniqueUsers",    DISTINCTCOUNT('Report page views'[User]),
-    "AvgDwellSeconds",AVERAGE('Report page views'[Average view time])
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        'Report page views'[Report Id],
+        'Report page views'[Report page name],
+        'Report page views'[Date],
+        "Views",          SUM('Report page views'[Views]),
+        "UniqueUsers",    DISTINCTCOUNT('Report page views'[User]),
+        "AvgDwellSeconds",AVERAGE('Report page views'[Average view time])
+    ),
+    'Report page views'[Date] >= DATE({since_y},{since_m},{since_d}),
+    'Report page views'[Date] <= DATE({until_y},{until_m},{until_d}),
+    'Report page views'[Report Id] = "{report_id}"
 )
 ORDER BY 'Report page views'[Date]
 ```
 
-The Usage Metrics v2 dataset schema (relevant tables):
+The Modern Usage Metrics dataset schema (relevant tables, best-effort —
+Microsoft does not publish the schema explicitly):
 
 | Table | Columns of interest |
 | --- | --- |
 | `Reports` | `Report Id`, `Report name`, `Workspace Id` |
 | `Report pages` | `Report Id`, `Page Id`, `Page name`, `Page ordinal` |
-| `Report page views` | `Report Id`, `Page Id`, `Date`, `Views`, `Unique users`, `Average view time`, `User` |
-| `Report views` | (report-level totals — for cross-check) |
+| `Report page views` | `Report Id`, `Date`, `Report page name`, `Views`, `User`, `Average view time` |
 | `Users` | `User`, `User principal name` |
 
-For page-level analysis you almost always want `Report page views`. For
-auditing, joins to `Users` give you the email back (PII — apply RLS).
+If your tenant's schema uses different column names, override
+`DAX_PAGE_VIEWS_TEMPLATE` in `collector.py` or open an issue with
+the introspection output of `EVALUATE INFO.TABLES()` +
+`EVALUATE INFO.COLUMNS()`.
 
-## 5. Throttling, retries, and quota
+## 6. Throttling, retries, and quota
 
 - Admin REST API: 200 req/hour tenant-wide on most endpoints; some
   (`getActivityEvents`) are 200 req/hour per tenant. Retry on 429 with
   exponential backoff (`Retry-After` honored).
+- `executeQueries`: 120 req/min per user. With one query per report,
+  a tenant with thousands of reports must throttle. Use the
+  Modern Usage Metrics dataset's coverage of an entire workspace to
+  collapse N queries into 1 per workspace if your downstream model
+  doesn't need per-report rows.
 - XMLA: governed by the capacity itself. One DAX query at a time per
   connection is safe; parallelism is bounded by capacity CU.
-- POST `/usageMetrics` is async on first call; the response is 202 with
-  `Location`. Subsequent calls are idempotent (200).
 
-## 6. RBAC matrix
+## 7. RBAC matrix
 
 | Action | Required role |
 | --- | --- |
 | `GET /admin/*` REST endpoints | Fabric Administrator **or** SG enabled for Read-only admin APIs |
-| `POST /admin/reports/{id}/usageMetrics` | Fabric Administrator |
-| XMLA read on Usage Metrics dataset | Workspace Contributor + capacity admin's `Allow XMLA endpoints to use service principals` setting |
+| Portal "View usage metrics report" click (one-time bootstrap per workspace) | Workspace Admin or Member |
+| `POST /datasets/{id}/executeQueries` against the Usage Metrics model | Workspace Member or Admin **and** capacity admin's `Allow XMLA endpoints to use service principals` setting enabled |
 | RLS-aware read of gold semantic model | Granted via Entra group → workspace role |
 
-## 7. What changes at GA of Monitor Usage Metrics for Workspaces
+## 8. What changes at GA of Monitor Usage Metrics for Workspaces
 
-The new (currently preview) feature provisions **one** semantic model
-per workspace (instead of one per report) covering reports, dashboards,
-paginated reports, page-level activity, and consumption. After GA:
+The Modern Usage Metrics feature this collector reads is in **public
+preview** today (May 2026) and targeting **GA September 2026** per Rui
+Romano (Power BI PM, HLS Roundtable). At GA:
 
-- Replace step 3 (POST `/usageMetrics` per report) with a single
-  workspace-level dataset reference.
-- Replace step 4 with a single DAX query per workspace, joining
-  Reports × Pages × Activity.
-- Collector throughput improves 10–50×; capacity cost drops proportionally.
-- Silver / gold schemas in this repo are forward-compatible — no change
-  needed to the dashboard or downstream consumers.
+- Semantic-model schema may stabilize and become publicly documented;
+  expect minor column-name tweaks. If they happen, the collector's
+  `PBI_USAGE_DATASET_NAME` / `DAX_PAGE_VIEWS_TEMPLATE` knobs absorb
+  the change without code edits.
+- The one-time portal bootstrap step may move into the Admin Portal
+  as a tenant-wide toggle (no per-workspace clicks). Watch the
+  Power BI release notes.
+- Microsoft may eventually ship a public REST endpoint that does the
+  same enumeration + DAX execution this collector does — at which
+  point this repo becomes a reference implementation of the same
+  pattern, not the only way to do it.
+
+Silver / gold schemas in this repo are forward-compatible — no change
+needed to the dashboard or downstream consumers.

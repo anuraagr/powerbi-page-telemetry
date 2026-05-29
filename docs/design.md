@@ -10,17 +10,42 @@ Power BI's first-party telemetry stops at the **report** grain. The
 admin-API `Get Activity Events`, the audit log, and the
 [Microsoft 365 admin "Activity"](https://learn.microsoft.com/power-bi/admin/service-admin-portal-usage-metrics)
 view all log `ViewReport` events without a page identifier. The only
-place page granularity exists is inside the per-report **Usage Metrics
-v2** dataset, which is provisioned lazily when a tenant admin clicks
-"Open usage metrics" on a report, lives in a hidden workspace
-(`Admin monitoring`), and is queryable only via XMLA or the dataset's
-own `executeQueries` REST endpoint.
+place page granularity exists is inside the per-workspace
+**Modern Usage Metrics** (preview) semantic model that Power BI
+auto-provisions when a workspace admin or contributor clicks
+`... → View usage metrics report` on any report in that workspace, once.
+After the click the model accumulates page-level rows for **every**
+report in the workspace into a single `Usage Metrics Report` semantic
+model, refreshed daily by Microsoft. There is **no public REST API**
+that does this provisioning or queries the model in bulk — confirmed by
+Power BI PM David Browne at the May 2026 HLS Roundtable:
 
-There is no Power BI feature on the public roadmap that exposes this
-tenant-wide. So a customer needs three things first-party doesn't give
-them: **enumerate** every report's metrics dataset, **provision** the
-ones that don't exist yet, and **query** them all on a schedule. That's
-exactly the collector.
+> *"That's this: Monitor Usage Metrics in Power BI Workspaces (preview).
+> ... And we don't have an API, but it builds a semantic model you can
+> access. But the scanner API doesn't have page-level activity events."*
+
+So a customer needs three things first-party doesn't give them:
+**enumerate** every workspace via admin REST, **discover** the
+per-workspace Usage Metrics model (and surface workspaces that haven't
+been bootstrapped yet for an admin to click), and **query** all the
+discovered models on a schedule. That's exactly the collector.
+
+## 1a. (HISTORICAL) Why this collector previously tried `POST /admin/reports/{id}/usageMetrics`
+
+In v0.1.0 this collector attempted to call
+`POST /v1.0/myorg/admin/reports/{id}/usageMetrics` to idempotently
+provision the per-report Usage Metrics v2 dataset. **That REST
+endpoint does not exist in the public Power BI API surface.** The
+"View usage metrics report" button in the portal is a portal-internal
+action; the public REST surface (per Microsoft Learn
+`/rest/api/power-bi/admin`) exposes only Get / GetInGroup /
+GetSubscriptions / GetUsers operations on admin Reports.
+
+v0.2.0 corrects this by reading the per-workspace Modern Usage Metrics
+semantic model (created lazily on the first portal click) instead.
+Workspaces that haven't been bootstrapped surface in
+`_run_summary.json → workspaces_not_bootstrapped` and are skipped, so
+an admin can do the one-time click in bulk and re-run.
 
 ## 2. Why REST `executeQueries` instead of XMLA / ADOMD.NET by default?
 

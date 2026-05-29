@@ -7,17 +7,21 @@ What this does
 Builds a tenant-wide, page-level usage dataset by:
 
   1. Authenticating to the Power BI service as a service principal.
-  2. Enumerating every report in every workspace via the Power BI Admin
-     REST API.
-  3. For each report, ensuring the auto-generated "Usage Metrics Report v2"
-     dataset exists (POST `/admin/reports/{id}/usageMetrics`).
-  4. Executing a parameterised DAX query against that dataset over the
-     Power BI REST `executeQueries` endpoint (or XMLA via pyadomd as an
-     optional advanced path) to pull per-page view counts and unique
-     users.
+  2. Enumerating every workspace via the Power BI Admin REST API.
+  3. For each workspace, looking up the auto-generated, per-workspace
+     "Usage Metrics Report" semantic model that the **Modern Usage
+     Metrics (preview)** feature creates the first time any admin /
+     contributor clicks "View usage metrics report" on any report in
+     that workspace. See:
+     https://learn.microsoft.com/en-us/power-bi/collaborate-share/service-modern-usage-metrics
+  4. For each report in that workspace, executing a parameterised DAX
+     query against that semantic model over the Power BI REST
+     `executeQueries` endpoint (or XMLA via pyadomd as an optional
+     advanced path) to pull per-page view counts and unique users.
   5. Writing one CSV per report into a date-partitioned `bronze/` layer,
      then emitting a conformed `silver/page_views.csv` and a
-     `_run_summary.json` with the silver schema version.
+     `_run_summary.json` with the silver schema version and a list of
+     any workspaces that need to be bootstrapped.
 
 All REST calls are wrapped in exponential-backoff retry that honors
 HTTP 429 `Retry-After` and transient 5xx, so a multi-workspace run
@@ -28,20 +32,28 @@ The same script in `--mock` mode does NOT call any Microsoft service —
 it loads the bundled synthetic sample data so reviewers can run end-to-end
 on a laptop with no tenant access.
 
-Why this is the right shape today
----------------------------------
-Microsoft Power BI does not expose a tenant-wide page-level activity API.
-The `Get Activity Events` API and the Admin scanner stop at `ViewReport`
-events — no page or section field. Page-level data does exist, but only
-inside the auto-generated **per-report** Usage Metrics datasets. The only
-way to roll it up tenant-wide today is to query those datasets directly
-over the XMLA endpoint, which is exactly what this collector does.
+Why this shape and not "/admin/reports/{id}/usageMetrics"
+---------------------------------------------------------
+There is **no public REST API to provision** a Usage Metrics dataset.
+The "View usage metrics report" button in app.powerbi.com is a portal-
+internal action — confirmed by Power BI Product Management (David Browne,
+in the CY2026 HLS Fabric Roundtable): *"We don't have an API, but it
+builds a semantic model you can access."*
 
-A new **Monitor Usage Metrics for Workspaces** capability is in preview
-and will provision a single workspace-level semantic model containing
-page-level activity. When that GAs, this collector's `XmlaReportAdapter`
-can be swapped for a `WorkspaceSemanticModelAdapter` without any change
-to the silver/gold schema or the dashboard.
+What we do have, post-Modern Usage Metrics preview, is **one semantic
+model per workspace** (named "Usage Metrics Report") that captures
+page-level activity for every report in the workspace, refreshed
+daily. Once any admin / contributor bootstraps a workspace by clicking
+"View usage metrics report" once on any report in it, the dataset
+exists forever and accumulates data for all reports — including new
+reports added later. This collector treats that one-time-per-workspace
+click as a deployment prerequisite (logged + summarised) and reads the
+resulting dataset via REST.
+
+The Admin Scanner / Activity Log path was also considered and rejected:
+its only report event is `ViewReport` (no `ViewReportPage` / page name
+field), which is exactly the report-level-only gap the customer asked
+us to close.
 
 Run modes
 ---------
@@ -53,8 +65,16 @@ Environment variables (live mode)
   PBI_TENANT_ID           Entra tenant ID
   PBI_CLIENT_ID           Service principal app ID
   PBI_CLIENT_SECRET       Service principal secret (use Key Vault in prod)
-  PBI_XMLA_WORKSPACE      Optional: workspace to use as default XMLA endpoint
+  PBI_USAGE_DATASET_NAME  Override the dataset name to look up
+                          (default: "Usage Metrics Report")
+  PBI_USE_PYADOMD         Set to "1" to route DAX via XMLA + ADOMD.NET
+                          instead of REST (Windows-only, advanced).
   PBI_OUTPUT_DIR          Where to write bronze/ and silver/ (defaults to ./out)
+  PBI_MOCK                Set to "1" to use bundled sample data instead of
+                          a live Power BI tenant (env-var equivalent of --mock).
+  PBI_SAMPLE_CSV          Override the location of the bundled sample CSV
+                          (useful when collector.py is vendored away from
+                          its sample_data/ folder, e.g. in containers).
 """
 from __future__ import annotations
 
@@ -91,7 +111,43 @@ except ImportError:
     requests = None  # only required for live mode
 
 HERE = Path(__file__).parent
-SAMPLE_CSV = HERE / "sample_data" / "page_views.csv"
+
+
+def _resolve_sample_csv(here: Path | None = None) -> Path:
+    """Find the bundled sample CSV. The collector may be deployed to an
+    Azure Function (where collector.py gets copied alongside function_app.py
+    and sample_data/ is left behind), or installed from source, or vendored
+    by a Fabric notebook to /tmp. Search in this priority order:
+
+      1. PBI_SAMPLE_CSV env var (full path; explicit override)
+      2. Adjacent: <collector.py dir>/sample_data/page_views.csv
+      3. Repo root: <collector.py dir>/../etl/sample_data/page_views.csv
+      4. Parent: <collector.py dir>/../sample_data/page_views.csv
+      5. Two-up: <collector.py dir>/../../etl/sample_data/page_views.csv
+         (for deploy/<option>/collector.py layouts)
+
+    `here` defaults to the directory containing this module and may be
+    overridden by tests to simulate a vendored layout. Returns the first
+    match. If none exist, returns the canonical adjacent path so
+    MockAdapter's existence check still produces a helpful error
+    message that points to a sensible location.
+    """
+    base = here if here is not None else HERE
+    candidates = [
+        Path(os.environ["PBI_SAMPLE_CSV"]) if os.environ.get("PBI_SAMPLE_CSV") else None,
+        base / "sample_data" / "page_views.csv",
+        base.parent / "etl" / "sample_data" / "page_views.csv",
+        base.parent / "sample_data" / "page_views.csv",
+        # e.g. deploy/azure-function/collector.py -> ../../etl/sample_data/
+        base.parent.parent / "etl" / "sample_data" / "page_views.csv",
+    ]
+    for c in candidates:
+        if c and c.exists():
+            return c
+    return base / "sample_data" / "page_views.csv"
+
+
+SAMPLE_CSV = _resolve_sample_csv()
 
 # Schema version for the silver layer. Bump on breaking changes (column
 # rename / drop / type change). Downstream MERGEs should assert on this
@@ -105,20 +161,31 @@ SILVER_SCHEMA_VERSION = "1.0.0"
 POWERBI_API = "https://api.powerbi.com/v1.0/myorg"
 SCOPE = "https://analysis.windows.net/powerbi/api/.default"
 
-# Single DAX query that we run against each Usage Metrics dataset.
-# The auto-generated dataset exposes a `Report page views` table whose
-# columns include `Report Id`, `Report page name`, `Date`, `Views`,
-# `Unique Users`, and `Average view time`. This summarisation is
-# server-side, so we transfer only the aggregated rows.
-DAX_PAGE_VIEWS = """
+# Default name of the per-workspace Modern Usage Metrics semantic model.
+# Overridable via the PBI_USAGE_DATASET_NAME env var if a tenant has
+# renamed it or is still on a legacy variant like "Usage Metrics Report v2".
+USAGE_METRICS_DATASET_NAME = "Usage Metrics Report"
+
+# Single DAX query that we run against each per-workspace Usage Metrics
+# semantic model. The Modern Usage Metrics model exposes a
+# `Report page views` table whose columns include `Report Id`,
+# `Report page name`, `Date`, `Views`, `User`, and `Average view time`.
+# We filter to a single report id at the source and aggregate
+# server-side so we transfer only the aggregated rows.
+DAX_PAGE_VIEWS_TEMPLATE = """
 EVALUATE
-SUMMARIZECOLUMNS(
-    'Report page views'[Report Id],
-    'Report page views'[Report page name],
-    'Report page views'[Date],
-    "Views",          SUM('Report page views'[Views]),
-    "UniqueUsers",    DISTINCTCOUNT('Report page views'[User]),
-    "AvgDwellSeconds",AVERAGE('Report page views'[Average view time])
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        'Report page views'[Report Id],
+        'Report page views'[Report page name],
+        'Report page views'[Date],
+        "Views",          SUM('Report page views'[Views]),
+        "UniqueUsers",    DISTINCTCOUNT('Report page views'[User]),
+        "AvgDwellSeconds",AVERAGE('Report page views'[Average view time])
+    ),
+    'Report page views'[Date] >= DATE({since_y},{since_m},{since_d}),
+    'Report page views'[Date] <= DATE({until_y},{until_m},{until_d}),
+    'Report page views'[Report Id] = "{report_id}"
 )
 ORDER BY 'Report page views'[Date]
 """
@@ -170,12 +237,23 @@ class CollectorAdapter:
         raise NotImplementedError
 
     def ensure_usage_metrics_dataset(self, report: Report) -> str:
-        """Return the dataset id of the report's Usage Metrics dataset.
-        Lazily provisions it via POST /admin/reports/{id}/usageMetrics
-        if it doesn't exist yet."""
+        """Return the dataset id of the Usage Metrics semantic model that
+        covers `report`. With the Modern Usage Metrics (preview) feature
+        this is a per-workspace dataset shared by every report in the
+        workspace; with the legacy variant it was per-report. Either way,
+        an empty string is a signal that the dataset doesn't exist yet
+        and the workspace needs a one-time bootstrap click in the portal
+        ("..." → "View usage metrics report" on any report in the workspace).
+        """
         raise NotImplementedError
 
-    def query_page_views(self, dataset_id: str, since: date, until: date) -> Iterator[PageViewRow]:
+    def query_page_views(
+        self,
+        dataset_id: str,
+        since: date,
+        until: date,
+        report_id: str | None = None,
+    ) -> Iterator[PageViewRow]:
         raise NotImplementedError
 
 
@@ -186,8 +264,27 @@ class CollectorAdapter:
 class LiveAdapter(CollectorAdapter):
     """Real implementation. Requires a service principal with:
        * Tenant setting `Service principals can use Power BI APIs` ON
-       * `Fabric administrator` or member of a workspace with admin rights
-       * Premium / Fabric capacity (P-SKU, F-SKU) for XMLA read access
+       * `Fabric administrator` (or member of the SP security group
+         enabled for read-only admin APIs)
+       * Read / member access to every workspace whose UM dataset will
+         be queried (the SP that calls `executeQueries` must be a
+         workspace contributor or admin on the workspace the dataset
+         lives in)
+       * Premium / Fabric / PPU capacity for the workspaces whose UM
+         datasets are read (executeQueries requires it)
+
+    Prerequisite per workspace
+    --------------------------
+    The Modern Usage Metrics (preview) dataset is created on first
+    portal click of "View usage metrics report" on any report in the
+    workspace. After that, Power BI accumulates per-page data for
+    *every* report in the workspace into a single semantic model
+    named "Usage Metrics Report", refreshed daily. This collector
+    reads that one model per workspace.
+
+    Workspaces that have never been bootstrapped are skipped with a
+    clear warning. The driver's run summary lists every skipped
+    workspace so an admin can do the one-time bootstrap in bulk.
 
     DAX execution path
     ------------------
@@ -200,9 +297,8 @@ class LiveAdapter(CollectorAdapter):
     a macOS laptop, or a Windows scheduled task.
 
     For tenants that want true XMLA (e.g. for queries that exceed the
-    REST endpoint's row limits, or for on-prem AS hybrid scenarios)
-    install `pyadomd` + the ADOMD.NET retail client. The adapter
-    auto-detects pyadomd and routes through it when available.
+    REST endpoint's row / time limits) install `pyadomd` + the
+    ADOMD.NET retail client and set `PBI_USE_PYADOMD=1`.
     """
 
     # Retry tuning ---------------------------------------------------------
@@ -218,7 +314,20 @@ class LiveAdapter(CollectorAdapter):
         self.client_secret = client_secret
         self._token: str | None = None
         self._token_expires: float = 0.0
+        # workspace_id -> Usage Metrics dataset id ("" means "not bootstrapped, do not retry")
+        self._usage_metrics_dataset_per_workspace: dict[str, str | None] = {}
+        # dataset_id -> workspace_id, for the executeQueries call
         self._workspace_for_dataset: dict[str, str] = {}
+        # workspace_id -> Workspace, for pyadomd path that needs the friendly name
+        self._workspaces_by_id: dict[str, Workspace] = {}
+        # dataset_id -> dataset name, for pyadomd path that needs Initial Catalog
+        self._dataset_name_by_id: dict[str, str] = {}
+        # Track which workspaces we warned about — surface in run summary.
+        self.workspaces_not_bootstrapped: list[str] = []
+        # Override the UM dataset name via env var (e.g. legacy "Usage Metrics Report v2").
+        self._usage_dataset_name = os.environ.get(
+            "PBI_USAGE_DATASET_NAME", USAGE_METRICS_DATASET_NAME
+        )
         # Optional: deferred import; only required for true XMLA queries via ADOMD.
         try:
             from pyadomd import Pyadomd  # noqa: F401
@@ -283,8 +392,7 @@ class LiveAdapter(CollectorAdapter):
         """HTTP with exponential backoff on 429/5xx that honors `Retry-After`.
 
         `allow_status` lists status codes that should be returned to the
-        caller without raising — useful for 409 / 202 LRO / 404-as-info.
-        """
+        caller without raising — useful for 404-as-info."""
         last_exc: Exception | None = None
         for attempt in range(self._RETRY_MAX_ATTEMPTS):
             try:
@@ -350,11 +458,13 @@ class LiveAdapter(CollectorAdapter):
             if not items:
                 return
             for w in items:
-                yield Workspace(
+                ws = Workspace(
                     id=w["id"],
                     name=w["name"],
                     capacity_id=w.get("capacityId"),
                 )
+                self._workspaces_by_id[ws.id] = ws
+                yield ws
             if len(items) < page:
                 return
             skip += page
@@ -375,72 +485,64 @@ class LiveAdapter(CollectorAdapter):
             )
 
     def ensure_usage_metrics_dataset(self, report: Report) -> str:
-        """Ensure the report's Usage Metrics v2 dataset exists and return its id.
-
-        `POST /admin/reports/{id}/usageMetrics` is a long-running operation
-        on first call: HTTP 202 + `Location` header to poll until terminal
-        status. Subsequent calls return 200 with the datasetId directly,
-        or 409 (already exists) — in which case we look up the dataset by
-        the well-known "Usage Metrics Report" naming convention.
+        """Return the workspace's Usage Metrics dataset id, cached per
+        workspace. The dataset is auto-provisioned by Power BI on the
+        FIRST "View usage metrics report" click in a workspace. There is
+        no public REST API to create it (confirmed by Power BI PM
+        David Browne) — so if a workspace has not been bootstrapped, we
+        log a warning, surface it in the run summary, and skip the
+        report.
         """
-        r = self._request(
-            "POST",
-            f"{POWERBI_API}/admin/reports/{report.id}/usageMetrics",
-            timeout=120,
-            allow_status=(202, 409),
-        )
+        ws_id = report.workspace_id
+        if ws_id in self._usage_metrics_dataset_per_workspace:
+            return self._usage_metrics_dataset_per_workspace[ws_id] or ""
 
-        ds_id = ""
-        if r.status_code in (200, 201):
-            ds_id = self._parse_dataset_id(r)
-        elif r.status_code == 202:
-            ds_id = self._poll_lro_for_dataset_id(r, report)
-        elif r.status_code == 409:
-            ds_id = self._lookup_usage_metrics_dataset(report)
-
+        ds_id, ds_name = self._lookup_usage_metrics_dataset_for_workspace(ws_id)
+        self._usage_metrics_dataset_per_workspace[ws_id] = ds_id or None
         if ds_id:
-            # Cache the dataset -> workspace mapping for the executeQueries call.
-            self._workspace_for_dataset[ds_id] = report.workspace_id
+            self._workspace_for_dataset[ds_id] = ws_id
+            self._dataset_name_by_id[ds_id] = ds_name
+            print(
+                f"  [usage-metrics] workspace '{report.workspace_name}' -> "
+                f"dataset '{ds_name}' ({ds_id[:8]}...)",
+                file=sys.stderr,
+            )
+        else:
+            self.workspaces_not_bootstrapped.append(report.workspace_name)
+            print(
+                f"  ! workspace '{report.workspace_name}' has no "
+                f"'{self._usage_dataset_name}' dataset. Bootstrap once by clicking "
+                "'...' -> 'View usage metrics report' on any report in this "
+                "workspace, then re-run. Skipping this workspace.",
+                file=sys.stderr,
+            )
         return ds_id
 
-    def _parse_dataset_id(self, response) -> str:
-        try:
-            return response.json().get("datasetId") or response.json().get("id") or ""
-        except ValueError:
-            return ""
-
-    def _poll_lro_for_dataset_id(self, initial_response, report: Report) -> str:
-        location = initial_response.headers.get("Location") or initial_response.headers.get("location")
-        if not location:
-            return self._lookup_usage_metrics_dataset(report)
-        for attempt in range(20):
-            time.sleep(min(2 ** attempt, 30))
-            r = self._request("GET", location, allow_status=(202,))
-            if r.status_code == 200:
-                ds_id = self._parse_dataset_id(r)
-                if ds_id:
-                    return ds_id
-                return self._lookup_usage_metrics_dataset(report)
-            # 202 = still working
-        # LRO didn't resolve in time; fall back to a lookup.
-        return self._lookup_usage_metrics_dataset(report)
-
-    def _lookup_usage_metrics_dataset(self, report: Report) -> str:
+    def _lookup_usage_metrics_dataset_for_workspace(self, ws_id: str) -> tuple[str, str]:
+        """Return (dataset_id, dataset_name) for the workspace's Usage
+        Metrics dataset, or ("", "") if not found.
+        Matches names that start with the configured prefix to cover
+        both 'Usage Metrics Report' and the legacy 'Usage Metrics Report v2'.
+        """
         r = self._request(
             "GET",
-            f"{POWERBI_API}/admin/groups/{report.workspace_id}/datasets",
+            f"{POWERBI_API}/admin/groups/{ws_id}/datasets",
         )
         for d in r.json().get("value", []):
-            # Auto-generated names look like:
-            #   "Usage Metrics Report" (legacy) or
-            #   "Usage Metrics Report v2 - <report-name>" (current)
             name = d.get("name") or ""
-            if name.startswith("Usage Metrics Report"):
-                return d["id"]
-        return ""
+            if name.startswith(self._usage_dataset_name):
+                return d["id"], name
+        return "", ""
 
-    def query_page_views(self, dataset_id: str, since: date, until: date) -> Iterator[PageViewRow]:
-        """Execute the page-views DAX query and yield typed rows.
+    def query_page_views(
+        self,
+        dataset_id: str,
+        since: date,
+        until: date,
+        report_id: str | None = None,
+    ) -> Iterator[PageViewRow]:
+        """Execute the page-views DAX query against the per-workspace
+        Usage Metrics semantic model, filtered to a single report id.
 
         Default path: POST /datasets/{id}/executeQueries (REST, JSON in/out).
         Advanced path: if pyadomd + ADOMD.NET are available AND
@@ -448,30 +550,30 @@ class LiveAdapter(CollectorAdapter):
 
         Both paths produce the same `PageViewRow` shape downstream.
         """
+        if not dataset_id:
+            # Workspace wasn't bootstrapped; ensure_usage_metrics_dataset
+            # has already warned and recorded it.
+            return
+
+        if not report_id:
+            raise ValueError(
+                "query_page_views() requires report_id when called against the "
+                "per-workspace Usage Metrics dataset (so DAX can filter to one "
+                "report)."
+            )
+
         if os.environ.get("PBI_USE_PYADOMD") and self._xmla_available:
-            yield from self._query_via_pyadomd(dataset_id, since, until)
+            yield from self._query_via_pyadomd(dataset_id, since, until, report_id)
             return
 
         ws_id = self._workspace_for_dataset.get(dataset_id)
         if not ws_id:
-            # Fallback: scan the tenant for the dataset. Expensive — should rarely fire.
-            for ws in self.list_workspaces():
-                for d in self._request(
-                    "GET", f"{POWERBI_API}/admin/groups/{ws.id}/datasets",
-                ).json().get("value", []):
-                    if d.get("id") == dataset_id:
-                        ws_id = ws.id
-                        self._workspace_for_dataset[dataset_id] = ws_id
-                        break
-                if ws_id:
-                    break
-        if not ws_id:
             raise RuntimeError(
-                f"Could not resolve workspace for dataset {dataset_id} — "
+                f"Could not resolve workspace for dataset {dataset_id} - "
                 "ensure_usage_metrics_dataset must be called first."
             )
 
-        dax = self._dax_with_date_filter(since, until)
+        dax = self._dax_with_filters(since, until, report_id)
         r = self._request(
             "POST",
             f"{POWERBI_API}/groups/{ws_id}/datasets/{dataset_id}/executeQueries",
@@ -487,28 +589,19 @@ class LiveAdapter(CollectorAdapter):
         for row in tables[0].get("rows", []):
             yield from self._coerce_executequeries_row(row, dataset_id)
 
-    def _dax_with_date_filter(self, since: date, until: date) -> str:
-        """Inject a date window into the base DAX so we don't haul 90 days
-        every run when the caller asked for 1."""
-        return (
-            "EVALUATE\n"
-            "FILTER(\n"
-            "  SUMMARIZECOLUMNS(\n"
-            "    'Report page views'[Report Id],\n"
-            "    'Report page views'[Report page name],\n"
-            "    'Report page views'[Date],\n"
-            "    \"Views\",          SUM('Report page views'[Views]),\n"
-            "    \"UniqueUsers\",    DISTINCTCOUNT('Report page views'[User]),\n"
-            "    \"AvgDwellSeconds\",AVERAGE('Report page views'[Average view time])\n"
-            "  ),\n"
-            f"  'Report page views'[Date] >= DATE({since.year},{since.month},{since.day}) &&\n"
-            f"  'Report page views'[Date] <= DATE({until.year},{until.month},{until.day})\n"
-            ")\n"
-            "ORDER BY 'Report page views'[Date]\n"
+    def _dax_with_filters(self, since: date, until: date, report_id: str) -> str:
+        """Build the parameterised DAX. CALCULATETABLE pushes the date +
+        report filters down before SUMMARIZECOLUMNS aggregates, which
+        keeps the query cheap on workspaces with many reports."""
+        return DAX_PAGE_VIEWS_TEMPLATE.format(
+            since_y=since.year, since_m=since.month, since_d=since.day,
+            until_y=until.year, until_m=until.month, until_d=until.day,
+            # Report Ids are GUIDs - safe to embed in DAX without escaping.
+            report_id=report_id,
         )
 
     def _coerce_executequeries_row(self, raw: dict, dataset_id: str) -> Iterator[PageViewRow]:
-        """`executeQueries` returns rows keyed by the DAX column expressions —
+        """`executeQueries` returns rows keyed by the DAX column expressions -
         e.g. `'Report page views'[Report Id]`, `[Views]`. Map to PageViewRow.
         Caller is expected to enrich workspace/report/capacity metadata
         from the earlier enumeration step."""
@@ -539,33 +632,27 @@ class LiveAdapter(CollectorAdapter):
             top_persona="",
         )
 
-    def _query_via_pyadomd(self, dataset_id: str, since: date, until: date) -> Iterator[PageViewRow]:
+    def _query_via_pyadomd(
+        self,
+        dataset_id: str,
+        since: date,
+        until: date,
+        report_id: str,
+    ) -> Iterator[PageViewRow]:
         from pyadomd import Pyadomd  # type: ignore
         ws_id = self._workspace_for_dataset.get(dataset_id, "")
-        # Lookup the workspace's *name* — XMLA wants the friendly Data Source.
-        ws_name = ""
-        for ws in self.list_workspaces():
-            if ws.id == ws_id:
-                ws_name = ws.name
-                break
-        if not ws_name:
-            raise RuntimeError(f"Could not find workspace name for id {ws_id}")
-        # Find the dataset name (Initial Catalog).
-        ds_name = ""
-        for d in self._request(
-            "GET", f"{POWERBI_API}/admin/groups/{ws_id}/datasets",
-        ).json().get("value", []):
-            if d.get("id") == dataset_id:
-                ds_name = d.get("name") or ""
-                break
+        ws = self._workspaces_by_id.get(ws_id)
+        if not ws:
+            raise RuntimeError(f"Could not find workspace metadata for id {ws_id}")
+        ds_name = self._dataset_name_by_id.get(dataset_id) or self._usage_dataset_name
         conn = (
             f"Provider=MSOLAP;"
-            f"Data Source=powerbi://api.powerbi.com/v1.0/myorg/{ws_name};"
+            f"Data Source=powerbi://api.powerbi.com/v1.0/myorg/{ws.name};"
             f"Initial Catalog={ds_name};"
             f"User ID=app:{self.client_id}@{self.tenant_id};"
             f"Password={self.client_secret};"
         )
-        dax = self._dax_with_date_filter(since, until)
+        dax = self._dax_with_filters(since, until, report_id)
         with Pyadomd(conn).cursor() as cur:
             cur.execute(dax)
             cols = [c.name for c in cur.description]
@@ -642,11 +729,19 @@ class MockAdapter(CollectorAdapter):
         # In mock-land we synthesize a deterministic id from the report id.
         return f"ds-um::{report.id}"
 
-    def query_page_views(self, dataset_id: str, since: date, until: date) -> Iterator[PageViewRow]:
+    def query_page_views(
+        self,
+        dataset_id: str,
+        since: date,
+        until: date,
+        report_id: str | None = None,
+    ) -> Iterator[PageViewRow]:
         # dataset_id maps back to a report_id via convention `ds-um::<report-id>`.
-        report_id = dataset_id.split("::", 1)[1]
+        # The optional `report_id` kwarg (used by LiveAdapter) is also accepted
+        # for symmetry; mock-mode uses the dataset_id convention.
+        rep_id = report_id or dataset_id.split("::", 1)[1]
         for r in self._rows:
-            if r["report_id"] != report_id:
+            if r["report_id"] != rep_id:
                 continue
             row_date = date.fromisoformat(r["view_date"])
             if row_date < since or row_date > until:
@@ -721,9 +816,12 @@ def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> d
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "since": since.isoformat(), "until": until.isoformat(),
         "workspaces": 0, "reports": 0, "datasets": 0, "rows": 0,
+        "reports_skipped_no_bootstrap": 0,
+        "workspaces_not_bootstrapped": [],
         "errors": [],
     }
     all_rows: list[PageViewRow] = []
+    seen_dataset_ids: set[str] = set()
 
     for ws in adapter.list_workspaces():
         summary["workspaces"] += 1
@@ -732,8 +830,17 @@ def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> d
             summary["reports"] += 1
             try:
                 ds_id = adapter.ensure_usage_metrics_dataset(rep)
-                summary["datasets"] += 1
-                raw_rows = list(adapter.query_page_views(ds_id, since, until))
+                if not ds_id:
+                    # Workspace hasn't been bootstrapped; ensure_usage_metrics_dataset
+                    # already logged the friendly warning. Skip this report.
+                    summary["reports_skipped_no_bootstrap"] += 1
+                    continue
+                if ds_id not in seen_dataset_ids:
+                    summary["datasets"] += 1
+                    seen_dataset_ids.add(ds_id)
+                raw_rows = list(
+                    adapter.query_page_views(ds_id, since, until, report_id=rep.id)
+                )
             except Exception as e:
                 msg = f"{rep.workspace_name}/{rep.name}: {type(e).__name__}: {e}"
                 summary["errors"].append(msg)
@@ -747,6 +854,15 @@ def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> d
             all_rows.extend(rep_rows)
             summary["rows"] += len(rep_rows)
             print(f"  [report] {rep.name}: {len(rep_rows):,} rows -> {out.parent.name}/{out.name}")
+
+    # Pull the bootstrap-needed list off the adapter if it tracked one.
+    not_bootstrapped = getattr(adapter, "workspaces_not_bootstrapped", None)
+    if not_bootstrapped:
+        # de-dup while preserving order
+        seen: set[str] = set()
+        summary["workspaces_not_bootstrapped"] = [
+            n for n in not_bootstrapped if not (n in seen or seen.add(n))
+        ]
 
     # Silver: one conformed CSV across the tenant, prefaced with the schema-version
     # comment so downstream MERGEs can assert compatibility.
@@ -827,8 +943,20 @@ Environment variables (live mode, alternative to CLI flags)
   PBI_TENANT_ID           Entra tenant ID
   PBI_CLIENT_ID           Service principal app ID
   PBI_CLIENT_SECRET       Service principal secret (use Key Vault in prod)
-  PBI_XMLA_WORKSPACE      Optional: workspace to use as default XMLA endpoint
+  PBI_USAGE_DATASET_NAME  Override the dataset name to look up
+                          (default: "Usage Metrics Report")
+  PBI_USE_PYADOMD         Set to "1" to route DAX via XMLA + ADOMD.NET
+                          instead of REST (Windows-only, advanced).
   PBI_OUTPUT_DIR          Where to write bronze/ and silver/ (defaults to ./out)
+
+Per-workspace bootstrap prerequisite (live mode)
+------------------------------------------------
+The Modern Usage Metrics semantic model is created on the FIRST click
+of "View usage metrics report" on any report in a workspace. There is
+no public REST API to create it (confirmed by Power BI PM David Browne).
+Workspaces without a bootstrapped model are skipped at runtime and
+listed in `_run_summary.json -> workspaces_not_bootstrapped` so an admin
+can do the one-time click in bulk and re-run.
 
 See docs/api-reference.md for the REST endpoints and DAX query, and
 docs/deployment-guide.md for end-to-end deployment in a Fabric tenant.
@@ -860,17 +988,22 @@ def main(argv: list[str] | None = None) -> int:
                         "'prometheus' = exposition-format gauges (greppable into a textfile collector).")
     args = p.parse_args(argv)
 
+    # Env-var equivalent of --mock so containerized deploys (Azure Function,
+    # Container Apps) can be smoke-tested with no credentials before being
+    # cut over to live mode.
+    mock = args.mock or os.environ.get("PBI_MOCK", "").lower() in ("1", "true", "yes")
+
     out_dir = args.out or Path(os.environ.get("PBI_OUTPUT_DIR") or (HERE / "out"))
 
     until = date.today()
     # In mock mode shift the window to the synthetic data's actual date
     # range so the script always produces output, even years after the
     # sample CSV was generated.
-    if args.mock:
+    if mock:
         until = MockAdapter.max_csv_date()
     since = until - timedelta(days=args.days - 1)
 
-    if args.mock:
+    if mock:
         adapter: CollectorAdapter = MockAdapter()
     else:
         tenant = args.tenant or os.environ.get("PBI_TENANT_ID")
