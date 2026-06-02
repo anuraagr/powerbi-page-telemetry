@@ -406,6 +406,7 @@ footer {
   <div class="tabs" role="tablist">
     <button class="tab active" data-tab="overview">Tenant overview</button>
     <button class="tab" data-tab="reports">Report drill-down</button>
+    <button class="tab" data-tab="unused">Unused pages</button>
     <button class="tab" data-tab="underused">Underused pages</button>
   </div>
 
@@ -469,7 +470,26 @@ footer {
     </div>
   </section>
 
-  <!-- TAB 3: underused -->
+  <!-- TAB 3: unused (v0.3.1 — zero-view pages with report names) -->
+  <section class="tab-panel" id="tab-unused">
+    <div class="card">
+      <h2>Pages with <strong>zero</strong> views (last 90 days)</h2>
+      <p class="desc">
+        Materialized straight from <code>silver/unused_pages.csv</code>. These are pages that exist
+        in the report (per the catalog) but had no recorded views in the window — the work list
+        report owners need to act on. Counts in the KPI strip: <strong id="unusedCount">—</strong>
+        unused pages across <strong id="unusedReportsCount">—</strong> reports.
+      </p>
+      <div class="scroll-tbl" style="max-height: 600px;">
+        <table id="unusedTable">
+          <thead><tr><th>Workspace</th><th>Report</th><th>Page</th><th class="num">Page #</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB 4: underused -->
   <section class="tab-panel" id="tab-underused">
     <div class="card">
       <h2>Pages with low or zero views (last 90 days)</h2>
@@ -513,10 +533,12 @@ footer {
     { label: "Reports", value: fmt.format(data.meta.total_reports) },
     { label: "Pages defined", value: fmt.format(data.meta.total_pages_defined) },
     { label: "Page views (90d)", value: fmt.format(data.meta.total_views), accent: true },
+    { label: "Unused pages",
+      value: fmt.format((data.meta && data.meta.unused_count) || (data.unused_pages || []).length),
+      sub: `0 views in 90d — across ${fmt.format((data.meta && data.meta.unused_reports_count) || 0)} reports`,
+      warning: true },
     { label: "Underused pages", value: fmt.format(data.meta.underused_count),
       sub: `< ${data.meta.underused_threshold} views in 90d`, warning: true },
-    { label: "Pages never viewed", value: fmt.format(data.meta.total_pages_never_viewed),
-      sub: "candidates for deprecation", warning: true },
   ];
   const kpiRow = document.getElementById("kpiRow");
   kpis.forEach(k => {
@@ -716,7 +738,21 @@ footer {
   picker.value = defaultReport.report_id;
   renderReport(defaultReport.report_id);
 
-  // ---- Tab 3: underused -------------------------------------------------
+  // ---- Tab 3: unused (v0.3.1) -------------------------------------------
+  const unusedRows = data.unused_pages || [];
+  document.getElementById("unusedCount").textContent = fmt.format(unusedRows.length);
+  document.getElementById("unusedReportsCount").textContent = fmt.format(
+    (data.meta && data.meta.unused_reports_count) ||
+    new Set(unusedRows.map(u => u.workspace_name + "|" + u.report_name)).size
+  );
+  const unusedBody = document.querySelector("#unusedTable tbody");
+  unusedRows.forEach(p => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${p.workspace_name}</td><td>${p.report_name}</td><td>${p.page_name}</td><td class="num">${fmt.format(p.page_ordinal)}</td>`;
+    unusedBody.appendChild(tr);
+  });
+
+  // ---- Tab 4: underused -------------------------------------------------
   const undBody = document.querySelector("#underusedTable tbody");
   data.underused_pages.forEach(p => {
     const tr = document.createElement("tr");

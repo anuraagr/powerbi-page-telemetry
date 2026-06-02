@@ -8,6 +8,7 @@
 //   page_catalog    dim  (every page that exists in every report)
 //   report_views    fact (report-day grain)
 //   user_views      fact (hashed-user-day grain)
+//   unused_pages    dim  (v0.3.1 — pre-materialized list of zero-view pages)
 //
 // Recommended relationships (Model view):
 //   page_catalog[workspace_id]+[report_id]+[page_id]  --(*:1)-->
@@ -53,15 +54,36 @@ Avg Dwell Seconds =
 
 // --------- 2. UNUSED-page detection (v0.3.0 — Jon's headline ask) ----------
 // "Which pages in our 60-page Phase III report has nobody opened in 90 days?"
-// Answer: every page in `page_catalog` that has zero matching rows in `page_views`.
 //
-// These measures assume a calculated [page_key] on both tables:
-//   page_key = [workspace_id] & "|" & [report_id] & "|" & [page_id]
-// and a relationship page_views[page_key] *-> page_catalog[page_key].
+// v0.3.1: the collector now writes silver/unused_pages.csv directly, so
+// these measures are trivial COUNTROWS over the pre-materialized table.
+// Customers can also just drop the unused_pages table on a visual with
+// no DAX at all — see PowerBI/README.md Page 4.
+//
+// The old EXCEPT-against-page_catalog pattern is preserved in comments
+// below as a fallback for anyone who wants to recompute it client-side.
 
 Unused Pages =
-    -- Pages that exist in the catalog but have ZERO views in the
-    -- current filter context. This is the LEFT-JOIN-is-null count.
+    -- v0.3.1: pre-materialized. Pages in page_catalog with ZERO matching
+    -- page_views rows, computed by the collector at silver-write time.
+    COUNTROWS ( 'unused_pages' )
+
+
+% Pages Unused =
+    DIVIDE ( [Unused Pages], [Unique Pages Defined] )
+
+
+Reports With Unused Pages =
+    -- How many reports have AT LEAST ONE unused page? Use this card
+    -- on the Unused Pages page to size the work.
+    DISTINCTCOUNT ( 'unused_pages'[report_id] )
+
+
+Unused Pages (legacy EXCEPT pattern, kept for reference) =
+    -- Functionally equivalent to [Unused Pages] above; uses the LEFT-JOIN-
+    -- via-EXCEPT pattern against page_catalog rather than the materialized
+    -- table. Slower but useful if you ever load page_catalog without
+    -- unused_pages (e.g. from a pre-v0.3.1 silver snapshot).
     VAR _Viewed =
         CALCULATETABLE (
             VALUES ( 'page_catalog'[page_key] ),
@@ -74,26 +96,6 @@ Unused Pages =
                 _Viewed
             )
         )
-
-
-% Pages Unused =
-    DIVIDE ( [Unused Pages], [Unique Pages Defined] )
-
-
-Reports With Unused Pages =
-    -- How many reports have AT LEAST ONE unused page? Use this card
-    -- on the Unused Pages page to size the work.
-    VAR _UnusedByReport =
-        ADDCOLUMNS (
-            SUMMARIZE (
-                'page_catalog',
-                'page_catalog'[workspace_id],
-                'page_catalog'[report_id]
-            ),
-            "UnusedHere", [Unused Pages]
-        )
-    RETURN
-        COUNTROWS ( FILTER ( _UnusedByReport, [UnusedHere] > 0 ) )
 
 
 // --------- 3. UNDERUSED-page detection ----------

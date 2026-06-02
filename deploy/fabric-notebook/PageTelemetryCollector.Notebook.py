@@ -39,14 +39,14 @@
 # Pin the collector release. Production should use a tagged release (e.g. v0.1.0);
 # use "main" only during development. The notebook caches the downloaded file to
 # the lakehouse so production keeps running even if GitHub is unreachable.
-COLLECTOR_REF = "v0.3.0"  # pinned to the released tag — bump after each release
+COLLECTOR_REF = "v0.3.1"  # pinned to the released tag — bump after each release
 KEYVAULT_URL  = "https://<your-keyvault>.vault.azure.net/"
 
 # Silver schema version this notebook is built for. Must match
 # `SILVER_SCHEMA_VERSION` in the collector; if upstream bumps it,
 # revisit the MERGE blocks in the final cell before promoting.
 # v0.3.0 = additive (3 new silver tables: page_catalog, report_views, user_views)
-EXPECTED_SCHEMA_VERSION = "1.1.0"
+EXPECTED_SCHEMA_VERSION = "1.2.0"
 
 # METADATA ********************
 
@@ -174,15 +174,16 @@ if exit_code != 0:
 
 # CELL ********************
 
-# Promote each of the FOUR silver CSVs (v0.3.0) to a Delta table in the
+# Promote each of the FIVE silver CSVs (v0.3.1) to a Delta table in the
 # attached lakehouse so DirectLake reports pick them up immediately. The
 # collector writes them to `Files/page_telemetry/silver/`.
 #
-# Schema (silver_schema_version=1.1.0):
+# Schema (silver_schema_version=1.2.0):
 #   page_views.csv      fact (page, day)            MERGE keys: workspace_id, report_id, page_id, view_date
 #   page_catalog.csv    dim  (latest catalog wins)  REPLACE strategy: catalog reflects current state
 #   report_views.csv    fact (report, day)          MERGE keys: workspace_id, report_id, view_date
 #   user_views.csv      fact (hashed user, day)     MERGE keys: report_id, user_id_hash, view_date
+#   unused_pages.csv    dim  (v0.3.1)               REPLACE strategy: pre-materialized LEFT JOIN result
 from pyspark.sql.functions import col, to_date, to_timestamp
 
 SILVER_DIR = "Files/page_telemetry/silver"
@@ -290,12 +291,31 @@ try:
 except Exception as e:                              # noqa: BLE001
     print(f"user_views.csv not loaded ({e!r}); skipping user_views_silver MERGE")
 
+# ---------- 5. unused_pages (v0.3.1 — dimension) -------------------------
+# Pre-materialized LEFT JOIN result: pages in page_catalog with ZERO
+# matching rows in page_views for the collection window. We REPLACE the
+# whole table on each run because (a) the upstream LEFT JOIN is recomputed
+# each run, and (b) "the current set of unused pages" is the truth Jon
+# wants to act on — yesterday's unused list isn't useful once the pages
+# are deleted or someone opens them. Same dim semantic as page_catalog.
+up_path = f"{SILVER_DIR}/unused_pages.csv"
+try:
+    df_up = (
+        _read_silver_csv(up_path)
+            .withColumn("catalog_pulled_at", to_timestamp(col("catalog_pulled_at")))
+    )
+    df_up.write.mode("overwrite").format("delta").saveAsTable("unused_pages_silver")
+except Exception as e:                              # noqa: BLE001
+    # File may not exist if a pre-v0.3.1 collector ran first; non-fatal.
+    print(f"unused_pages.csv not loaded ({e!r}); skipping unused_pages_silver replace")
+
 # ---------- Row count summary --------------------------------------------
 for tname in (
     "page_views_silver",
     "page_catalog_silver",
     "report_views_silver",
     "user_views_silver",
+    "unused_pages_silver",
 ):
     try:
         n = spark.sql(f"SELECT COUNT(*) FROM {tname}").collect()[0][0]  # noqa: F821

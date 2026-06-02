@@ -153,7 +153,7 @@ SAMPLE_CSV = _resolve_sample_csv()
 # Schema version for the silver layer. Bump on breaking changes (column
 # rename / drop / type change). Downstream MERGEs should assert on this
 # in their landing notebook to avoid silent data corruption.
-SILVER_SCHEMA_VERSION = "1.1.0"
+SILVER_SCHEMA_VERSION = "1.2.0"
 
 # ---------------------------------------------------------------------------
 # REST API surface
@@ -333,6 +333,29 @@ class UserViewRow:
     view_date: str
     view_count: int
     distinct_pages_viewed: int
+
+
+@dataclass
+class UnusedPageRow:
+    """v0.3.1 — one row per page that EXISTS in `page_catalog` but has ZERO
+    matching rows in `page_views` for the collection window. Computed by the
+    collector via in-memory LEFT JOIN after both feeds finish. Materialized
+    so consumers can list/sort/filter by report_name without writing DAX or
+    a join in Power Query.
+
+    Shape mirrors PageCatalogRow exactly so a `UNION ALL` with the catalog
+    is trivial if you ever want a single 'is_unused' flag on the catalog
+    instead of two tables. `catalog_pulled_at` is copied from the catalog
+    row so consumers can see the as-of timestamp without joining back.
+    """
+    workspace_id: str
+    workspace_name: str
+    report_id: str
+    report_name: str
+    page_id: str
+    page_name: str
+    page_ordinal: int
+    catalog_pulled_at: str  # copied from the originating PageCatalogRow
 
 # ---------------------------------------------------------------------------
 # Adapter interface — same contract for live and mock
@@ -1299,8 +1322,12 @@ def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> d
         "user_view_rows": 0,
         # Derived metric — the headline value-add for v0.3.0. Computed
         # after all reports finish (needs the LEFT JOIN to run).
+        # v0.3.1: also materializes the list to silver/unused_pages.csv.
         "unused_pages": 0,
         "reports_with_unused_pages": 0,
+        # Top-10 of unused pages with human names (ops-log preview).
+        # Full list lives in silver/unused_pages.csv.
+        "unused_pages_sample": [],
         # Back-compat: keep `rows` as a synonym for page_view_rows so any
         # v0.2.x dashboard reading the summary still works.
         "rows": 0,
@@ -1386,24 +1413,59 @@ def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> d
         (c.workspace_id, c.report_id, c.page_id) for c in all_page_catalog_rows
         if (c.workspace_id, c.report_id, c.page_id) not in viewed_page_keys
     }
+    # v0.3.1: materialize the unused list, don't just count it. Consumers
+    # asked "I can't see the report names of those unused" — fair feedback.
+    # Sort key is (workspace_name, report_name, page_ordinal) so a human
+    # opening unused_pages.csv in Excel sees pages in their natural order.
+    all_unused_page_rows: list[UnusedPageRow] = sorted(
+        (
+            UnusedPageRow(
+                workspace_id=c.workspace_id,
+                workspace_name=c.workspace_name,
+                report_id=c.report_id,
+                report_name=c.report_name,
+                page_id=c.page_id,
+                page_name=c.page_name,
+                page_ordinal=c.page_ordinal,
+                catalog_pulled_at=c.catalog_pulled_at,
+            )
+            for c in all_page_catalog_rows
+            if (c.workspace_id, c.report_id, c.page_id) in unused_keys
+        ),
+        key=lambda r: (r.workspace_name, r.report_name, r.page_ordinal),
+    )
     summary["unused_pages"] = len(unused_keys)
     summary["reports_with_unused_pages"] = len({(ws, rep) for (ws, rep, _) in unused_keys})
+    # Ops-log preview — first 10 unused pages with their human names so a
+    # grep of the logs shows "Protocol v1 (legacy)" etc. instead of just "10".
+    summary["unused_pages_sample"] = [
+        {
+            "workspace_name": r.workspace_name,
+            "report_name": r.report_name,
+            "page_name": r.page_name,
+            "page_ordinal": r.page_ordinal,
+        }
+        for r in all_unused_page_rows[:10]
+    ]
 
-    # Silver: 4 conformed CSVs across the tenant, each prefaced with the
+    # Silver: 5 conformed CSVs across the tenant, each prefaced with the
     # schema-version comment so downstream MERGEs can assert compatibility.
     pv_path  = silver / "page_views.csv"
     pc_path  = silver / "page_catalog.csv"
     rv_path  = silver / "report_views.csv"
     uv_path  = silver / "user_views.csv"
+    up_path  = silver / "unused_pages.csv"
     _write_rows(pv_path, all_page_view_rows,    schema_version_comment=True)
     _write_rows(pc_path, all_page_catalog_rows, schema_version_comment=True)
     _write_rows(rv_path, all_report_view_rows,  schema_version_comment=True)
     _write_rows(uv_path, all_user_view_rows,    schema_version_comment=True)
+    _write_rows(up_path, all_unused_page_rows,  schema_version_comment=True)
     summary["silver_paths"] = {
-        "page_views":   str(pv_path),
-        "page_catalog": str(pc_path),
-        "report_views": str(rv_path),
-        "user_views":   str(uv_path),
+        "page_views":    str(pv_path),
+        "page_catalog":  str(pc_path),
+        "report_views":  str(rv_path),
+        "user_views":    str(uv_path),
+        "unused_pages":  str(up_path),
     }
     # Back-compat: keep the v0.2.x `silver_path` key (page_views only)
     # so any external dashboard reading the summary keeps working.

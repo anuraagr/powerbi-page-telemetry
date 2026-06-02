@@ -178,6 +178,24 @@ def aggregate() -> dict:
     underused = [p for p in flat_pages if p["views"] < underused_threshold]
     underused.sort(key=lambda x: x["views"])
 
+    # ---- v0.3.1: unused pages (zero views, by name). Jon's headline ask ----
+    # Surface pages that exist (per reports_catalog.csv) but had NO views in
+    # the window — the work list owners need to act on. flat_pages above
+    # excludes zero-view rows by design, so we have to walk reports_out.pages
+    # which DOES include zero-view rows reconstructed from the catalog.
+    unused_pages = []
+    for r in reports_out:
+        for p in r["pages"]:
+            if p["views"] > 0:
+                continue
+            unused_pages.append({
+                "workspace_name": r["workspace_name"],
+                "report_name":    r["report_name"],
+                "page_name":      p["page_name"],
+                "page_ordinal":   p["page_ordinal"],
+            })
+    unused_pages.sort(key=lambda x: (x["workspace_name"], x["report_name"], x["page_ordinal"]))
+
     # ---- distribution histogram ------------------------------------------
     buckets = [(0, 0), (1, 10), (11, 50), (51, 200), (201, 1000), (1001, 5000), (5001, 10**9)]
     bucket_labels = ["0 (never)", "1–10", "11–50", "51–200", "201–1k", "1k–5k", "5k+"]
@@ -207,6 +225,8 @@ def aggregate() -> dict:
         "total_views": total_views,
         "underused_threshold": underused_threshold,
         "underused_count": len(underused),
+        "unused_count": len(unused_pages),
+        "unused_reports_count": len({(u["workspace_name"], u["report_name"]) for u in unused_pages}),
     }
 
     return {
@@ -216,6 +236,7 @@ def aggregate() -> dict:
         "daily": daily_out,
         "top_pages": top_pages,
         "underused_pages": underused[:200],
+        "unused_pages": unused_pages,
         "distribution": distribution,
     }
 

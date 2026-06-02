@@ -1,20 +1,24 @@
-// PageTelemetry.Connect.pq  -  v0.3.0 (silver schema 1.1.0)
+// PageTelemetry.Connect.pq  -  v0.3.1 (silver schema 1.2.0)
 //
 // Power Query M script. Paste into Power BI Desktop:
 //   Home -> Get Data -> Blank Query -> Advanced Editor -> paste -> Done
 //
-// In v0.3.0 the collector emits FOUR silver tables (was 1 in v0.2.x):
+// In v0.3.1 the collector emits FIVE silver tables (was 1 in v0.2.x):
 //
 //   page_views     fact   one row per (workspace, report, page, date)
 //   page_catalog   dim    every page that EXISTS in every report (catalog)
 //   report_views   fact   report-level grain (no page dimension)
 //   user_views     fact   per-(hashed)user grain
+//   unused_pages   dim    pre-materialized list of pages in catalog with
+//                         ZERO matching page_views rows for the window.
+//                         Use this for the "unused pages" visual — no DAX
+//                         join needed, just drop it on the canvas.
 //
 // The unused-page detection answer that Jon at Incyte asked for
 // ("which pages in our 60-page clinical-trial report has nobody opened?")
-// comes from page_catalog LEFT JOIN page_views.
+// is the unused_pages table — pre-computed by the collector.
 //
-// This script returns a RECORD with four tables. After pasting, click
+// This script returns a RECORD with five tables. After pasting, click
 // "Convert to Table" at the top of the editor, then each row becomes
 // a query you load into the model.
 
@@ -30,11 +34,12 @@ let
     // ---------------- 2. Per-mode settings --------------
     Fabric_WorkspaceName  = "Analytics-Ops",
     Fabric_LakehouseName  = "PageTelemetry_LH",
-    // v0.3.0 Delta table names (match the Fabric notebook MERGE blocks)
+    // v0.3.1 Delta table names (match the Fabric notebook MERGE blocks)
     Fabric_TablePageViews    = "page_views_silver",
     Fabric_TablePageCatalog  = "page_catalog_silver",
     Fabric_TableReportViews  = "report_views_silver",
     Fabric_TableUserViews    = "user_views_silver",
+    Fabric_TableUnusedPages  = "unused_pages_silver",
 
     Blob_AccountUrl       = "https://<storage-account>.blob.core.windows.net",
     Blob_Container        = "page-telemetry",
@@ -43,13 +48,14 @@ let
     Blob_PathPageCatalog  = "silver/page_catalog.csv",
     Blob_PathReportViews  = "silver/report_views.csv",
     Blob_PathUserViews    = "silver/user_views.csv",
+    Blob_PathUnusedPages  = "silver/unused_pages.csv",
 
     Local_SilverDir       = "C:\PowerBI-PageTelemetry\out\silver",
 
     // ---------------- 3. Schema-version pin -------------
     // Must match SILVER_SCHEMA_VERSION in etl/collector.py.
-    // v0.3.0 bumps the MINOR (additive: new tables, no changed columns).
-    ExpectedSchemaVersion = "1.1.0",
+    // v0.3.1 bumps the MINOR (additive: new unused_pages table, no changed columns).
+    ExpectedSchemaVersion = "1.2.0",
 
     // ---------------- Implementation --------------------
     //
@@ -97,6 +103,7 @@ let
     PageCatalogRaw  = LoadOne(Fabric_TablePageCatalog, Blob_PathPageCatalog, "page_catalog.csv"),
     ReportViewsRaw  = LoadOne(Fabric_TableReportViews, Blob_PathReportViews, "report_views.csv"),
     UserViewsRaw    = LoadOne(Fabric_TableUserViews,   Blob_PathUserViews,   "user_views.csv"),
+    UnusedPagesRaw  = LoadOne(Fabric_TableUnusedPages, Blob_PathUnusedPages, "unused_pages.csv"),
 
     // ---------------- Typing ----------------------------
     PageViews = Table.TransformColumnTypes(PageViewsRaw, {
@@ -150,14 +157,30 @@ let
         {"distinct_pages_viewed",   Int64.Type}
     }),
 
-    // Return all four as a record. In Power BI Desktop after pasting,
+    // v0.3.1 — pre-materialized list of (workspace, report, page) entries
+    // that exist in page_catalog but have ZERO matching page_views rows
+    // for the collection window. Drop on a Power BI table visual and
+    // sort by report_name + page_ordinal to get the work list for owners.
+    UnusedPages = Table.TransformColumnTypes(UnusedPagesRaw, {
+        {"workspace_id",       type text},
+        {"workspace_name",     type text},
+        {"report_id",          type text},
+        {"report_name",        type text},
+        {"page_id",            type text},
+        {"page_name",          type text},
+        {"page_ordinal",       Int64.Type},
+        {"catalog_pulled_at",  type datetimezone}
+    }),
+
+    // Return all five as a record. In Power BI Desktop after pasting,
     // expand the record so each becomes its own query that loads to
     // the model. Recommended relationships are in the README.
     Output = [
         page_views    = PageViews,
         page_catalog  = PageCatalog,
         report_views  = ReportViews,
-        user_views    = UserViews
+        user_views    = UserViews,
+        unused_pages  = UnusedPages
     ]
 in
     Output

@@ -5,13 +5,14 @@ the silver layer is landing. Drop these straight into Fabric SQL
 endpoint, ADX/KQL, or a Power BI semantic model on top of the
 template in [`dashboard/PowerBI/`](../dashboard/PowerBI/).
 
-Assumes Delta tables with the v1.1.0 silver schema (see
+Assumes Delta tables with the v1.2.0 silver schema (see
 [`data-dictionary.md`](data-dictionary.md)):
 
 - `page_views_silver`     fact (page, day)
 - `page_catalog_silver`   dim  (every page that EXISTS, v0.3.0)
 - `report_views_silver`   fact (report, day, v0.3.0)
 - `user_views_silver`     fact (hashed user, day, v0.3.0)
+- `unused_pages_silver`   dim  (every page with zero views, with names, v0.3.1)
 
 ## 1. Top 10 underused pages tenant-wide
 
@@ -57,15 +58,47 @@ Underused Top 10 =
         TOPN ( 10, FILTER ( _PageTotals, [TotalViews] <= 10 ), [TotalViews], ASC )
 ```
 
-## 1a. UNUSED pages — every page in the catalog with zero views (v0.3.0)
+## 1a. UNUSED pages — every page in the catalog with zero views
 
-The killer query for v0.3.0 and the one Jon at Incyte asked for:
-"which pages in our 60-page Phase III report has nobody opened in 90
-days?" Pages with zero views literally do not exist in
-`page_views_silver` (it's a fact table) — you can only find them by
-LEFT JOIN-ing the catalog.
+The killer query for the v0.3.x line and the one Jon at Incyte asked
+for: "which pages in our 60-page Phase III report has nobody opened
+in 90 days?"
 
-### Spark / Fabric SQL
+### v0.3.1 — one-liner against the new silver table
+
+In v0.3.1 the collector materializes the LEFT JOIN result as a 5th
+silver table with the full workspace / report / page names already
+on the row. Read it directly — no joins, no DAX gymnastics:
+
+### Spark / Fabric SQL (v0.3.1, preferred)
+
+```sql
+SELECT
+    workspace_name,
+    report_name,
+    page_ordinal,
+    page_name,
+    catalog_pulled_at
+FROM unused_pages_silver
+ORDER BY workspace_name, report_name, page_ordinal;
+```
+
+### DAX (v0.3.1, preferred)
+
+```dax
+Unused Pages = COUNTROWS ( 'unused_pages' )
+Reports With Unused Pages =
+    DISTINCTCOUNT ( 'unused_pages'[report_id] )
+```
+
+No `page_key` calculated column or relationship needed — the
+unused_pages table stands alone.
+
+### Spark / Fabric SQL (v0.3.0 legacy LEFT JOIN, kept for older snapshots)
+
+Pages with zero views literally do not exist in `page_views_silver`
+(it's a fact table) — for snapshots collected with schema 1.1.0 or
+earlier, find them by LEFT JOIN-ing the catalog yourself:
 
 ```sql
 SELECT
@@ -98,10 +131,11 @@ Clinical Operations        | Phase III Trial - STUDY-101| 49           | Enrollm
 ... 7 more across STUDY-202 and STUDY-303
 ```
 
-### DAX (model with `page_views`, `page_catalog`)
+### DAX (v0.3.0 legacy, kept for snapshots without `unused_pages_silver`)
 
-Define a `[page_key]` calculated column on both tables (see
-`dashboard/PowerBI/README.md`), then:
+For snapshots collected with schema 1.1.0 (no `unused_pages_silver`),
+define a `[page_key]` calculated column on both `page_views` and
+`page_catalog` (see `dashboard/PowerBI/README.md`), then:
 
 ```dax
 Unused Pages =

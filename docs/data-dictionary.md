@@ -4,9 +4,9 @@ This is the contract between the collector and any downstream
 consumer — gold semantic model, ad-hoc SQL, the bundled dashboard,
 or a custom Power BI report.
 
-**Schema version**: `1.1.0` (matches `SILVER_SCHEMA_VERSION` in
+**Schema version**: `1.2.0` (matches `SILVER_SCHEMA_VERSION` in
 [`etl/collector.py`](../etl/collector.py)). The version is emitted as
-the first line of every silver CSV as `# silver_schema_version=1.1.0`
+the first line of every silver CSV as `# silver_schema_version=1.2.0`
 and in `_run_summary.json`. Downstream readers should assert on it
 before reading.
 
@@ -26,7 +26,7 @@ Roundtable: *"we don't have an API, but
 can access."* This collector is the implementation of that pattern,
 scaled across thousands of workspaces.
 
-## File layout (v0.3.0)
+## File layout (v0.3.1)
 
 ```
 out/
@@ -42,11 +42,18 @@ out/
 │       └── user_views/
 │           └── <wsId>__<reportId>.csv
 └── silver/
-    ├── page_views.csv         ← first line "# silver_schema_version=1.1.0"
+    ├── page_views.csv         ← first line "# silver_schema_version=1.2.0"
     ├── page_catalog.csv       ← (NEW in v0.3.0) every page that EXISTS
     ├── report_views.csv       ← (NEW in v0.3.0) report-level grain
-    └── user_views.csv         ← (NEW in v0.3.0) per-user grain (hashed UPN)
+    ├── user_views.csv         ← (NEW in v0.3.0) per-user grain (hashed UPN)
+    └── unused_pages.csv       ← (NEW in v0.3.1) page_catalog ∖ page_views, with names
 ```
+
+> Note: `unused_pages` is a **silver-only, collector-side derivation**
+> (`page_catalog` LEFT JOIN `page_views` WHERE no view). It has no
+> bronze sub-folder because it is not pulled from a per-(workspace,
+> report) source — it is computed AFTER all reports finish. Materializing
+> it as silver saves every consumer from re-running the join.
 
 ## Table 1 — `page_views.csv` (v0.1.0+)
 
@@ -156,11 +163,49 @@ collector process — see [`pii-and-retention.md`](pii-and-retention.md).
 > requires a known plaintext oracle — i.e. an adversary already
 > inside your tenant, in which case they have the UPNs anyway.
 
+## Table 5 — `unused_pages.csv` (NEW in v0.3.1)
+
+**Grain**: one row per `(workspace_id, report_id, page_id)` that
+exists in `page_catalog` and has **zero rows** in `page_views` for
+the same window. Identical column shape to `page_catalog` — so a
+downstream consumer can UNION ALL with an `is_unused` flag if they
+want a single denormalized dim.
+
+**Use for**: Jon's headline ask — "which pages in our 60-page
+clinical-trial report has nobody opened?" — answered without any
+joins, with the actual workspace / report / page names already on
+the row.
+
+**Source**: collector-side derivation. The collector already does the
+LEFT JOIN in memory to count `unused_pages` for `_run_summary.json`;
+v0.3.1 materializes the keys as a 5th silver file (so the answer to
+"which pages?" is on disk, not just the answer to "how many?").
+**No additional Power BI REST call** beyond the 4 already made per
+`(workspace, report)` in v0.3.0.
+
+The rows are sorted by `(workspace_name, report_name, page_ordinal)`
+so a human eyeballing the CSV sees pages grouped by report and in
+display order — matches the order they appear in the Power BI Pages
+pane. Each daily run is overwritten in place (REPLACE / dim
+semantic): yesterday's "unused" list is not useful once pages are
+deleted or opened.
+
+| Column | Type | Required | PII | Source | Description | Example |
+|---|---|---|---|---|---|---|
+| `workspace_id` | `string` (GUID) | Yes | No | from `page_catalog` row | Workspace GUID. | `aaaaaaaa-...` |
+| `workspace_name` | `string` | Yes | No | from `page_catalog` row | Workspace display name. | `Clinical Operations` |
+| `report_id` | `string` (GUID) | Yes | No | from `page_catalog` row | Report GUID. | `rep-clin-study101` |
+| `report_name` | `string` | Yes | No | from `page_catalog` row | Report display name. | `Phase III STUDY-101 — Clinical Trial Tracking` |
+| `page_id` | `string` | Yes | No | from `page_catalog` row | Page section name. | `p101-legacy-prot-v1` |
+| `page_name` | `string` | Yes | No | from `page_catalog` row | Page display name at collection time. | `Protocol v1 (legacy)` |
+| `page_ordinal` | `int32` | Yes | No | from `page_catalog` row | Page position within the report. | `56` |
+| `catalog_pulled_at` | `string` (ISO-8601 with TZ) | Yes | No | propagated from the source `page_catalog` row | When the catalog row that this unused row was derived from was pulled. | `2026-05-27T00:00:00+00:00` |
+
 ## Run summary — `_run_summary.json`
 
 ```json
 {
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "started_at": "2026-06-02T18:51:19+00:00",
   "ended_at":   "2026-06-02T18:51:20+00:00",
   "since": "2026-02-27",
@@ -174,15 +219,25 @@ collector process — see [`pii-and-retention.md`](pii-and-retention.md).
   "user_view_rows": 6289,
   "unused_pages": 10,
   "reports_with_unused_pages": 3,
+  "unused_pages_sample": [                ← v0.3.1 — top-10 with full names, inline
+    {
+      "workspace_name": "Clinical Operations",
+      "report_name":    "Phase III STUDY-101 — Clinical Trial Tracking",
+      "page_name":      "Protocol v1 (legacy)",
+      "page_ordinal":   56
+    }
+    /* up to 9 more */
+  ],
   "rows": 15480,                          ← v0.2.x back-compat alias of page_view_rows
   "reports_skipped_no_bootstrap": 0,
   "workspaces_not_bootstrapped": [],
   "errors": [],
-  "silver_paths": {                       ← v0.3.0 — all 4 silver files
+  "silver_paths": {                       ← v0.3.1 — all 5 silver files
     "page_views":   "out/silver/page_views.csv",
     "page_catalog": "out/silver/page_catalog.csv",
     "report_views": "out/silver/report_views.csv",
-    "user_views":   "out/silver/user_views.csv"
+    "user_views":   "out/silver/user_views.csv",
+    "unused_pages": "out/silver/unused_pages.csv"
   },
   "silver_path": "out/silver/page_views.csv",   ← v0.2.x back-compat alias
   "bronze_partition": "out/bronze/dt=2026-05-27"
@@ -200,7 +255,7 @@ import csv
 
 with open("silver/page_views.csv", "r", encoding="utf-8") as f:
     first = f.readline()
-    assert first.startswith("# silver_schema_version=1.0.0"), \
+    assert first.startswith("# silver_schema_version=1.2.0"), \
         "schema mismatch — regenerate gold artifacts"
     # Don't seek back — DictReader picks up from where we left off.
     rows = list(csv.DictReader(f))

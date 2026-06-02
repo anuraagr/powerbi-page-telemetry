@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1]
+
+### Fixed (Jon at Incyte v0.3.0 feedback: *"I cannot see the report names of those unused."*)
+
+- **`silver/unused_pages.csv`** (NEW, 5th silver table) — first-class,
+  fully-named list of every page that exists in the catalog and has
+  zero views in the window. Same shape as `page_catalog.csv`
+  (`workspace_id`, `workspace_name`, `report_id`, `report_name`,
+  `page_id`, `page_name`, `page_ordinal`, `catalog_pulled_at`),
+  sorted by `(workspace_name, report_name, page_ordinal)` for
+  human readability. Replaces (and remains backed by) the in-memory
+  LEFT JOIN that v0.3.0 ran in `run()` but threw away after counting.
+  Any downstream consumer — the Power BI template, Fabric SQL, the
+  bundled dashboard, an email-to-owner Logic App — now reads one
+  table with no joins to surface the actual names.
+- **`dashboard/PageUsageDashboard.html`** — new **Unused pages** tab
+  before the existing Underused tab, listing every zero-view page
+  with workspace + report + page name + ordinal. A KPI tile was also
+  swapped to surface the unused count and affected-reports count.
+- **`dashboard/PowerBI/PageTelemetry.Measures.dax`** — `[Unused Pages]`
+  is now a one-liner `COUNTROWS('unused_pages')`. No `page_key`
+  calculated column or relationship needed for Page 4 of the
+  recommended layout — the unused_pages table stands alone. The
+  legacy v0.3.0 LEFT-JOIN-EXCEPT pattern is preserved as a
+  reference measure for anyone still on schema 1.1.0.
+- **`dashboard/PowerBI/PageTelemetry.Connect.pq`** — returns 5 typed
+  tables instead of 4; `ExpectedSchemaVersion = "1.2.0"`.
+- **`dashboard/PowerBI/README.md`** — Page 4 (Unused Pages) rewritten
+  to "drop the unused_pages table on the canvas, no DAX." Quickstart
+  bumped from 4 → 5 queries; Fabric mode mentions all 5 Delta tables.
+- **`deploy/fabric-notebook/PageTelemetryCollector.Notebook.py`** —
+  added 5th block: REPLACE/overwrite for `unused_pages_silver`
+  (same dim semantic as page_catalog — yesterday's "unused" list
+  isn't useful once pages are deleted or opened, so each daily run
+  is the truth). `COLLECTOR_REF = "v0.3.1"`,
+  `EXPECTED_SCHEMA_VERSION = "1.2.0"`.
+- **`_run_summary.json` new key**: `unused_pages_sample` (top-10 list
+  with full names, inline in the summary for quick eyeballing of
+  the first dead pages without opening the CSV).
+- **`tests/test_v030_grains.py`** — 5 new tests pinning the
+  invariant: unused_pages.csv exists, row count == summary's
+  `unused_pages` count == 10, every row has non-empty
+  workspace_name / report_name / page_name, set equality with the
+  page_catalog – page_views LEFT JOIN, sorted by (ws, report,
+  ordinal), byte-identical across mock runs.
+
+### Changed
+
+- **`SILVER_SCHEMA_VERSION = "1.2.0"`** — additive minor bump. Any
+  v0.3.0 reader of the existing 4 silver tables keeps working
+  (columns and grain unchanged); new readers can use the 5th table.
+- **`EXPECTED_SCHEMA_VERSION = "1.2.0"`** in the Fabric notebook.
+  Reads of older 1.1.0 silver still load the existing 4 tables and
+  skip `unused_pages_silver` cleanly (the file simply isn't there).
+
+### Documentation
+
+- Updated `docs/data-dictionary.md`, `docs/pii-and-retention.md`,
+  `docs/api-reference.md`, `docs/gold-queries.md` to document the
+  5th table and explain it's a collector-side LEFT JOIN derivation
+  (no extra Power BI REST call beyond what v0.3.0 already makes).
+  Section 1a of the gold cookbook now offers the simpler
+  `SELECT * FROM unused_pages_silver` query alongside the legacy
+  LEFT JOIN equivalent.
+
 ## [0.3.0]
 
 ### Added (the headline: page_catalog → unused-page detection)
@@ -270,4 +335,5 @@ options + offline demo + customer-readiness pass.
 [0.1.0]: https://github.com/anuraagr/powerbi-page-telemetry/releases/tag/v0.1.0
 [0.2.0]: https://github.com/anuraagr/powerbi-page-telemetry/releases/tag/v0.2.0
 [0.3.0]: https://github.com/anuraagr/powerbi-page-telemetry/releases/tag/v0.3.0
-[Unreleased]: https://github.com/anuraagr/powerbi-page-telemetry/compare/v0.3.0...HEAD
+[0.3.1]: https://github.com/anuraagr/powerbi-page-telemetry/releases/tag/v0.3.1
+[Unreleased]: https://github.com/anuraagr/powerbi-page-telemetry/compare/v0.3.1...HEAD

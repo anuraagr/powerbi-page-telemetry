@@ -1,12 +1,14 @@
-"""v0.3.0 tests: page_catalog, report_views, user_views silver tables
-plus unused-page detection (LEFT JOIN page_catalog vs page_views).
+"""v0.3.0 + v0.3.1 tests: page_catalog, report_views, user_views, and
+unused_pages silver tables.
 
 The headline story for Jon at Incyte is "which pages in our 60-page
 Phase III Clinical Trial report has nobody opened in 90 days?" — that
 question is unanswerable without the page_catalog feed, because
 `'Report page views'` is a fact table and zero-view pages literally
 don't appear in it. These tests guard the end-to-end correctness of
-that LEFT JOIN math and the three new silver feeds.
+that LEFT JOIN math, the three v0.3.0 silver feeds, and the v0.3.1
+unused_pages.csv feed that surfaces the actual workspace/report/page
+names (Jon's v0.3.0 feedback: "I cannot see the report names").
 """
 from __future__ import annotations
 
@@ -29,11 +31,11 @@ from collector import (
 # v0.3.0 schema + summary pinning
 # ---------------------------------------------------------------------------
 
-def test_schema_version_is_minor_bump_to_1_1_0() -> None:
-    """v0.3.0 is additive (new tables, no breaking column changes) so the
-    silver schema bumps the MINOR component only — old readers of
-    page_views.csv keep working."""
-    assert SILVER_SCHEMA_VERSION == "1.1.0"
+def test_schema_version_is_minor_bump_to_1_2_0() -> None:
+    """v0.3.1 is additive (new unused_pages table, no breaking column
+    changes) so the silver schema bumps the MINOR component only — old
+    readers of page_views.csv / page_catalog.csv keep working."""
+    assert SILVER_SCHEMA_VERSION == "1.2.0"
 
 
 def _read_silver(path: Path) -> list[dict]:
@@ -48,14 +50,20 @@ def _read_summary(tmp_path: Path) -> dict:
     return json.loads((tmp_path / "_run_summary.json").read_text(encoding="utf-8"))
 
 
-def test_run_emits_all_four_silver_feeds(tmp_path: Path) -> None:
+def test_run_emits_all_five_silver_feeds(tmp_path: Path) -> None:
     main(["--mock", "--out", str(tmp_path)])
     silver = tmp_path / "silver"
-    for name in ("page_views.csv", "page_catalog.csv", "report_views.csv", "user_views.csv"):
+    for name in (
+        "page_views.csv",
+        "page_catalog.csv",
+        "report_views.csv",
+        "user_views.csv",
+        "unused_pages.csv",
+    ):
         assert (silver / name).exists(), f"missing silver feed: {name}"
 
 
-def test_run_summary_has_v030_keys(tmp_path: Path) -> None:
+def test_run_summary_has_v031_keys(tmp_path: Path) -> None:
     main(["--mock", "--out", str(tmp_path)])
     s = _read_summary(tmp_path)
     for key in (
@@ -65,15 +73,19 @@ def test_run_summary_has_v030_keys(tmp_path: Path) -> None:
         "user_view_rows",
         "unused_pages",
         "reports_with_unused_pages",
+        "unused_pages_sample",
         "silver_paths",
     ):
-        assert key in s, f"missing v0.3.0 summary key: {key}"
+        assert key in s, f"missing v0.3.x summary key: {key}"
     # v0.2.x back-compat fields still present
     assert s["rows"] == s["page_view_rows"]
     assert s["silver_path"] == s["silver_paths"]["page_views"]
+    # v0.3.1: unused_pages silver path is listed
+    assert "unused_pages" in s["silver_paths"]
+    assert s["silver_paths"]["unused_pages"].endswith("unused_pages.csv")
 
 
-def test_run_summary_pins_mock_v030_numbers(tmp_path: Path) -> None:
+def test_run_summary_pins_mock_v031_numbers(tmp_path: Path) -> None:
     """If the generator or the unused_pages.json overlay changes, the
     headline numbers in README and the Power BI dashboard would silently
     move. Pin them. To update: confirm the change is intentional, then
@@ -86,6 +98,15 @@ def test_run_summary_pins_mock_v030_numbers(tmp_path: Path) -> None:
     assert s["user_view_rows"] == 6_289
     assert s["unused_pages"] == 10
     assert s["reports_with_unused_pages"] == 3
+    # v0.3.1: top-10 sample inline in summary, with all 4 human-readable keys
+    sample = s["unused_pages_sample"]
+    assert isinstance(sample, list)
+    assert len(sample) >= 1
+    for entry in sample:
+        for key in ("workspace_name", "report_name", "page_name", "page_ordinal"):
+            assert key in entry, f"unused_pages_sample missing key: {key}"
+            if key != "page_ordinal":
+                assert entry[key], f"unused_pages_sample empty {key}: {entry}"
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +327,10 @@ def test_hash_upn_handles_blank() -> None:
 # Determinism — mock run twice must produce byte-identical silver
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("feed", ["page_views", "page_catalog", "report_views", "user_views"])
+@pytest.mark.parametrize(
+    "feed",
+    ["page_views", "page_catalog", "report_views", "user_views", "unused_pages"],
+)
 def test_silver_feeds_are_byte_identical_across_runs(tmp_path: Path, feed: str) -> None:
     """The whole sample-data contract depends on mock runs being
     reproducible across machines and Python versions. If this regresses,
@@ -316,3 +340,60 @@ def test_silver_feeds_are_byte_identical_across_runs(tmp_path: Path, feed: str) 
     main(["--mock", "--out", str(a)])
     main(["--mock", "--out", str(b)])
     assert (a / "silver" / f"{feed}.csv").read_bytes() == (b / "silver" / f"{feed}.csv").read_bytes()
+
+
+# ---------------------------------------------------------------------------
+# v0.3.1: unused_pages silver feed — the file that surfaces the names
+# ---------------------------------------------------------------------------
+
+def test_unused_pages_silver_has_required_columns(tmp_path: Path) -> None:
+    """Same shape as page_catalog so a downstream consumer can UNION ALL
+    and add an is_unused flag if they want a single denormalized dim."""
+    main(["--mock", "--out", str(tmp_path)])
+    rows = _read_silver(tmp_path / "silver" / "unused_pages.csv")
+    assert rows, "unused_pages.csv should not be empty (mock seeds 10 unused)"
+    required = {
+        "workspace_id", "workspace_name", "report_id", "report_name",
+        "page_id", "page_name", "page_ordinal", "catalog_pulled_at",
+    }
+    assert required.issubset(rows[0].keys())
+
+
+def test_unused_pages_silver_pins_mock_row_count_and_names(tmp_path: Path) -> None:
+    """Jon's v0.3.0 feedback: 'I cannot see the report names of those unused.'
+    v0.3.1 guarantee: every unused row has a non-empty report_name and
+    workspace_name. Also pin row count == summary["unused_pages"]."""
+    main(["--mock", "--out", str(tmp_path)])
+    rows = _read_silver(tmp_path / "silver" / "unused_pages.csv")
+    s = _read_summary(tmp_path)
+    assert len(rows) == s["unused_pages"] == 10
+    for r in rows:
+        assert r["workspace_name"], f"empty workspace_name in unused row: {r}"
+        assert r["report_name"], f"empty report_name in unused row: {r}"
+        assert r["page_name"], f"empty page_name in unused row: {r}"
+
+
+def test_unused_pages_silver_matches_left_join_set(tmp_path: Path) -> None:
+    """unused_pages.csv must be EXACTLY (page_catalog - page_views) by
+    composite key. This is the regression test for the original
+    in-memory-and-discarded bug from v0.3.0."""
+    main(["--mock", "--out", str(tmp_path)])
+    pv = _read_silver(tmp_path / "silver" / "page_views.csv")
+    pc = _read_silver(tmp_path / "silver" / "page_catalog.csv")
+    up = _read_silver(tmp_path / "silver" / "unused_pages.csv")
+
+    viewed = {(r["workspace_id"], r["report_id"], r["page_id"]) for r in pv}
+    catalog = {(r["workspace_id"], r["report_id"], r["page_id"]) for r in pc}
+    expected_unused = catalog - viewed
+    actual_unused = {(r["workspace_id"], r["report_id"], r["page_id"]) for r in up}
+    assert actual_unused == expected_unused
+
+
+def test_unused_pages_silver_is_sorted_for_readability(tmp_path: Path) -> None:
+    """Sorted by (workspace_name, report_name, page_ordinal) so a human
+    eyeballing the CSV sees pages grouped by report and in display order
+    — matches how they appear in the Power BI Pages pane."""
+    main(["--mock", "--out", str(tmp_path)])
+    rows = _read_silver(tmp_path / "silver" / "unused_pages.csv")
+    keys = [(r["workspace_name"], r["report_name"], int(r["page_ordinal"])) for r in rows]
+    assert keys == sorted(keys), "unused_pages.csv is not sorted"

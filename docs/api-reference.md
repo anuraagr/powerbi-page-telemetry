@@ -184,7 +184,7 @@ If your tenant's schema uses different column names, override
 the introspection output of `EVALUATE INFO.TABLES()` +
 `EVALUATE INFO.COLUMNS()`.
 
-### v0.3.0 — three DAX queries per workspace
+### v0.3.0 — three DAX queries per workspace (unchanged in v0.3.1)
 
 v0.3.0 adds two more DAX templates (against the same Modern Usage
 Metrics model, same `executeQueries` endpoint, same throttle bucket).
@@ -200,6 +200,11 @@ so the wire payload is small and the throttle math stays the same per
 report (~4 calls per report × 0.5s = ~2s wall-clock per report ignoring
 network jitter). The collector parallelizes across workspaces but
 serializes within a workspace to stay polite to the per-dataset cache.
+
+> **v0.3.1 changes nothing on the wire.** The new
+> `silver/unused_pages.csv` is a collector-side LEFT JOIN of
+> `page_catalog` against `page_views` (both already on disk from the
+> 4 calls above). No additional Power BI REST call is made.
 
 #### `DAX_REPORT_VIEWS_TEMPLATE` — report-level grain
 

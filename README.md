@@ -59,9 +59,11 @@ today** using only documented Microsoft APIs:
      page that exists in every report, including pages with zero
      views. A LEFT JOIN against `page_views` gives you the
      **unused-page list** Jon at Incyte asked for.
-   - Pulls **4 grains** into 4 silver CSVs (v0.3.0):
+   - Pulls **5 silver tables** (v0.3.1):
      `page_views` (page-day), `page_catalog` (every page that exists),
-     `report_views` (report-day), `user_views` (per-hashed-user-day).
+     `report_views` (report-day), `user_views` (per-hashed-user-day),
+     `unused_pages` (page_catalog ∖ page_views, with full names — Jon
+     at Incyte's v0.3.0 ask: "I cannot see the report names").
    - Lands rows in a `bronze/` → `silver/` layout that drops cleanly into
      a Fabric Lakehouse, ADLS Gen2, or local disk.
    - Ships with a `MockAdapter` so you can run the whole pipeline on a
@@ -110,7 +112,7 @@ flowchart LR
 
     subgraph Storage["Storage"]
         B[("bronze/dt=YYYY-MM-DD/<br/>{page_views,page_catalog,<br/>report_views,user_views}/")]
-        S[("silver/<br/>page_views.csv ·<br/>page_catalog.csv ·<br/>report_views.csv ·<br/>user_views.csv<br/>schema v1.1.0")]
+        S[("silver/<br/>page_views.csv ·<br/>page_catalog.csv ·<br/>report_views.csv ·<br/>user_views.csv ·<br/>unused_pages.csv<br/>schema v1.2.0")]
     end
 
     subgraph Consumers["Consumers"]

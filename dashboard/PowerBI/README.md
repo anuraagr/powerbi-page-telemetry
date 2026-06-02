@@ -1,4 +1,4 @@
-# Power BI template — Page Telemetry semantic model  (v0.3.0)
+# Power BI template — Page Telemetry semantic model  (v0.3.1)
 
 Three small assets you can paste into Power BI Desktop or Tabular
 Editor to stand up a real Power BI report on top of the collector
@@ -6,24 +6,34 @@ output — no Power BI Desktop file needed, so nothing binary in the repo.
 
 | File | Purpose |
 |---|---|
-| [`PageTelemetry.Connect.pq`](PageTelemetry.Connect.pq) | A Power Query M script. Reads **all 4 silver tables** (`page_views`, `page_catalog`, `report_views`, `user_views`) from one of three sources: Fabric Lakehouse, Azure Blob CSVs, or local files. Handles the `# silver_schema_version=...` preamble. |
-| [`PageTelemetry.Measures.dax`](PageTelemetry.Measures.dax) | DAX measures: headline KPIs, **unused-page detection** (LEFT-JOIN-is-null), underused detection, report-level rollups, user analytics (hashed UPNs), time-series, capacity attribution, page-ordinal funnel. |
+| [`PageTelemetry.Connect.pq`](PageTelemetry.Connect.pq) | A Power Query M script. Reads **all 5 silver tables** (`page_views`, `page_catalog`, `report_views`, `user_views`, `unused_pages`) from one of three sources: Fabric Lakehouse, Azure Blob CSVs, or local files. Handles the `# silver_schema_version=...` preamble. |
+| [`PageTelemetry.Measures.dax`](PageTelemetry.Measures.dax) | DAX measures: headline KPIs, **unused-page detection** (trivial `COUNTROWS('unused_pages')` in v0.3.1), underused detection, report-level rollups, user analytics (hashed UPNs), time-series, capacity attribution, page-ordinal funnel. |
 | **Recommended dashboard layout** | See [§ Recommended visuals](#recommended-visuals) below — 5 pages: Overview, Report Drill, Page Drill, **Unused Pages**, User Analytics. |
+
+## What's new in v0.3.1
+
+`silver/unused_pages.csv` is now written directly by the collector — no
+more LEFT JOIN to compute client-side. Just drop the `unused_pages`
+table on a Power BI visual and you get a sortable list of every page
+that nobody opened, with full `workspace_name` + `report_name` +
+`page_name` + `page_ordinal` (this was Jon's feedback on v0.3.0:
+"I cannot see the report names of those unused").
 
 ## What's new in v0.3.0
 
-The collector now emits **four** silver tables (was 1 in v0.2.x), all
+The collector emits **five** silver tables (was 1 in v0.2.x), all
 co-located in `silver/`:
 
-| Table | Grain | Source DAX |
+| Table | Grain | Source |
 |---|---|---|
-| `page_views` | `(workspace, report, page, date)` | `'Report page views'` (preview) |
+| `page_views` | `(workspace, report, page, date)` | DAX against `'Report page views'` |
 | `page_catalog` | `(workspace, report, page)` — every page that EXISTS | `GET /v1.0/myorg/groups/{ws}/reports/{rep}/pages` |
-| `report_views` | `(workspace, report, date)` | `'Report views'` (preview) |
-| `user_views` | `(report, hashed_user, date)` | `'Report page views'` GROUP BY `[User]` |
+| `report_views` | `(workspace, report, date)` | DAX against `'Report views'` |
+| `user_views` | `(report, hashed_user, date)` | DAX against `'Report page views'` GROUP BY `[User]` |
+| `unused_pages` (v0.3.1) | `(workspace, report, page)` — pages with **zero** views | collector in-memory LEFT JOIN of catalog \ views |
 
-The schema bumps to **`1.1.0`** (additive — old v0.2.x readers of
-`page_views.csv` keep working).
+The schema is **`1.2.0`** (additive — old v0.2.x / v0.3.0 readers
+keep working).
 
 The headline new measure is `[Unused Pages]` — pages that EXIST in
 the catalog but have ZERO matching rows in `page_views`. This is what
@@ -42,11 +52,12 @@ couldn't answer.
    parameters at the top:
    - `ConnectionMode = "local"`
    - `Local_SilverDir = "C:\PowerBI-PageTelemetry\out\silver"`
-4. Click **Done**. The query returns a **record** with 4 tables.
+4. Click **Done**. The query returns a **record** with 5 tables.
    In the editor, **right-click → Convert to Table → To Table**, then
-   click the expand button on the `Value` column and load all 4.
-5. Click **Close & Apply**. Power BI loads 4 queries:
-   `page_views`, `page_catalog`, `report_views`, `user_views`.
+   click the expand button on the `Value` column and load all 5.
+5. Click **Close & Apply**. Power BI loads 5 queries:
+   `page_views`, `page_catalog`, `report_views`, `user_views`,
+   `unused_pages`.
 6. **Model view** → add a calculated column on **both** `page_views`
    and `page_catalog`:
    ```dax
@@ -54,6 +65,7 @@ couldn't answer.
    ```
    Hide both (right-click → Hide in report view). Create a
    single-direction relationship `page_views[page_key] *-> page_catalog[page_key]`.
+   (`unused_pages` doesn't need a relationship — it's pre-aggregated.)
 7. **Model view** → for each measure in `PageTelemetry.Measures.dax`,
    **New measure** → paste → Enter. Pin to the `page_views` table.
 8. Build the recommended 5-page layout below.
@@ -68,7 +80,7 @@ Fabric_WorkspaceName = "Analytics-Ops"
 Fabric_LakehouseName = "PageTelemetry_LH"
 ```
 
-The Fabric notebook (`deploy/fabric-notebook/`) lands all 4 Delta
+The Fabric notebook (`deploy/fabric-notebook/`) lands all 5 Delta
 tables under `<lakehouse>/Tables/`. The Power Query script reads them
 through the Fabric connector.
 
@@ -127,11 +139,16 @@ yourself in Desktop after pasting the scripts above, then
 ### Page 4 — **Unused Pages** ← Jon's headline page
 - Cards: `[Unused Pages]`, `[Reports With Unused Pages]`,
   `[% Pages Unused]`
-- Table from `page_catalog` (NOT page_views — that's the whole point):
-  `workspace_name`, `report_name`, `page_name`, `page_ordinal`.
-  Filter to pages where `[Total Views] = BLANK()` or use a
-  `IsUnused = IF([Total Views] = BLANK(), 1, 0)` flag.
-- This is the work list to take to report owners.
+- **Table from the pre-materialized `unused_pages` table (v0.3.1):**
+  drag `workspace_name`, `report_name`, `page_name`, `page_ordinal`
+  onto a Table visual, sort by `report_name` + `page_ordinal`. No DAX
+  filter needed — every row in `unused_pages` is unused by definition.
+- This is the work list to take to report owners. Export to Excel
+  straight from the visual to start the deprecation conversation.
+
+*Legacy v0.3.0 alternative (still works if you only loaded `page_catalog`):
+table from `page_catalog`, filter where `[Total Views] = BLANK()` or
+use a `IsUnused = IF([Total Views] = BLANK(), 1, 0)` flag column.*
 
 ### Page 5 — **User Analytics**
 - Cards: `[Unique Users]`, `[Power Users]`, `[Avg Pages Per User]`

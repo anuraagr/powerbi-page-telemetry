@@ -7,8 +7,9 @@ accordingly before exposing it to a broader audience.
 
 ## What is and isn't PII in the silver layer
 
-`page_views`, `page_catalog`, and `report_views` are **all non-PII**.
-`user_views` (v0.3.0) carries **pseudonymized PII** (hashed UPN).
+`page_views`, `page_catalog`, `report_views`, and `unused_pages` are
+**all non-PII**. `user_views` (v0.3.0) carries **pseudonymized PII**
+(hashed UPN).
 
 The DAX queries the collector issues against the Usage Metrics
 dataset are intentionally **aggregated**: `page_views` at
@@ -31,6 +32,7 @@ touch disk.
 | `page_views.top_persona` | No | Optional enrichment category, not user-identifying. |
 | `page_views.capacity_name` | No | Tenant metadata. |
 | `page_catalog.*` (v0.3.0) | No | Page roster only — no view data, no users. |
+| `unused_pages.*` (v0.3.1) | No | Subset of `page_catalog` — no view data, no users. Same column shape, same PII profile (none). |
 | `report_views.*` (v0.3.0) | No | Same shape as page_views minus the page dimension. |
 | **`user_views.user_id_hash`** (v0.3.0) | **Pseudonymized** | SHA-256-of-lowercased-UPN, first 16 hex chars. **NOT** reversible by anyone outside the tenant. Treat as PII-equivalent for retention, RLS, and DSAR. |
 | `user_views.view_count` / `distinct_pages_viewed` | No (in isolation) | Aggregates per hashed user. |
