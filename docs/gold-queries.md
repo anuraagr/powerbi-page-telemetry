@@ -5,8 +5,13 @@ the silver layer is landing. Drop these straight into Fabric SQL
 endpoint, ADX/KQL, or a Power BI semantic model on top of the
 template in [`dashboard/PowerBI/`](../dashboard/PowerBI/).
 
-Assumes a Delta table `page_views_silver` with the silver schema
-(see [`data-dictionary.md`](data-dictionary.md)).
+Assumes Delta tables with the v1.1.0 silver schema (see
+[`data-dictionary.md`](data-dictionary.md)):
+
+- `page_views_silver`     fact (page, day)
+- `page_catalog_silver`   dim  (every page that EXISTS, v0.3.0)
+- `report_views_silver`   fact (report, day, v0.3.0)
+- `user_views_silver`     fact (hashed user, day, v0.3.0)
 
 ## 1. Top 10 underused pages tenant-wide
 
@@ -50,6 +55,169 @@ Underused Top 10 =
         )
     RETURN
         TOPN ( 10, FILTER ( _PageTotals, [TotalViews] <= 10 ), [TotalViews], ASC )
+```
+
+## 1a. UNUSED pages — every page in the catalog with zero views (v0.3.0)
+
+The killer query for v0.3.0 and the one Jon at Incyte asked for:
+"which pages in our 60-page Phase III report has nobody opened in 90
+days?" Pages with zero views literally do not exist in
+`page_views_silver` (it's a fact table) — you can only find them by
+LEFT JOIN-ing the catalog.
+
+### Spark / Fabric SQL
+
+```sql
+SELECT
+    pc.workspace_name,
+    pc.report_name,
+    pc.page_ordinal,
+    pc.page_name,
+    pc.catalog_pulled_at
+FROM page_catalog_silver pc
+LEFT JOIN (
+    SELECT DISTINCT workspace_id, report_id, page_id
+    FROM page_views_silver
+    WHERE view_date >= current_date() - INTERVAL 90 DAYS
+) pv
+  ON  pv.workspace_id = pc.workspace_id
+  AND pv.report_id    = pc.report_id
+  AND pv.page_id      = pc.page_id
+WHERE pv.page_id IS NULL
+ORDER BY pc.workspace_name, pc.report_name, pc.page_ordinal;
+```
+
+Mock-data result (`python etl/collector.py --mock`):
+
+```
+workspace_name             | report_name                | page_ordinal | page_name
+---------------------------|----------------------------|--------------|--------------------------------
+Clinical Operations        | Phase III Trial - STUDY-101| 47           | Protocol v1 (legacy)
+Clinical Operations        | Phase III Trial - STUDY-101| 48           | DEBUG: per-site raw rates
+Clinical Operations        | Phase III Trial - STUDY-101| 49           | Enrollment funnel (deprecated)
+... 7 more across STUDY-202 and STUDY-303
+```
+
+### DAX (model with `page_views`, `page_catalog`)
+
+Define a `[page_key]` calculated column on both tables (see
+`dashboard/PowerBI/README.md`), then:
+
+```dax
+Unused Pages =
+    VAR _Viewed =
+        CALCULATETABLE (
+            VALUES ( 'page_catalog'[page_key] ),
+            'page_views'
+        )
+    RETURN
+        COUNTROWS (
+            EXCEPT ( VALUES ( 'page_catalog'[page_key] ), _Viewed )
+        )
+
+Reports With Unused Pages =
+    VAR _UnusedByReport =
+        ADDCOLUMNS (
+            SUMMARIZE (
+                'page_catalog',
+                'page_catalog'[workspace_id],
+                'page_catalog'[report_id]
+            ),
+            "UnusedHere", [Unused Pages]
+        )
+    RETURN
+        COUNTROWS ( FILTER ( _UnusedByReport, [UnusedHere] > 0 ) )
+```
+
+### Take-this-to-the-report-owner export
+
+To produce a CSV the BI ops team can email to each report owner,
+group the SQL above by `workspace_name`, run once per workspace, and
+attach to a templated email. Many customers automate this with a
+Logic App / Power Automate flow reading the same Delta table.
+
+## 1b. Page coverage rate per report (v0.3.0)
+
+What % of each report's pages get used at all? A report with
+`coverage_rate < 50%` is probably trying to be 2-3 reports.
+
+### Spark / Fabric SQL
+
+```sql
+WITH defined AS (
+    SELECT workspace_id, workspace_name, report_id, report_name,
+           COUNT(DISTINCT page_id) AS pages_defined
+    FROM page_catalog_silver
+    GROUP BY workspace_id, workspace_name, report_id, report_name
+),
+viewed AS (
+    SELECT workspace_id, report_id, COUNT(DISTINCT page_id) AS pages_viewed
+    FROM page_views_silver
+    WHERE view_date >= current_date() - INTERVAL 90 DAYS
+    GROUP BY workspace_id, report_id
+)
+SELECT
+    d.workspace_name,
+    d.report_name,
+    d.pages_defined,
+    COALESCE(v.pages_viewed, 0) AS pages_viewed,
+    ROUND(100.0 * COALESCE(v.pages_viewed, 0) / d.pages_defined, 1) AS coverage_pct
+FROM defined d
+LEFT JOIN viewed v
+  ON v.workspace_id = d.workspace_id AND v.report_id = d.report_id
+ORDER BY coverage_pct ASC, pages_defined DESC;
+```
+
+## 1c. Pages-per-session by report (v0.3.0)
+
+The page grain ÷ the report grain. A report where users open only one
+page per session is mostly an entrance experience — find these and
+either trim them or invest in cross-page navigation.
+
+### Spark / Fabric SQL
+
+```sql
+SELECT
+    pv.workspace_name,
+    pv.report_name,
+    SUM(pv.view_count) AS total_page_views,
+    SUM(rv.view_count) AS total_report_sessions,
+    ROUND(SUM(pv.view_count) * 1.0 / NULLIF(SUM(rv.view_count), 0), 2)
+        AS pages_per_session,
+    AVG(rv.avg_session_seconds) AS avg_session_seconds
+FROM page_views_silver pv
+JOIN report_views_silver rv
+  ON  rv.workspace_id = pv.workspace_id
+  AND rv.report_id    = pv.report_id
+  AND rv.view_date    = pv.view_date
+WHERE pv.view_date >= current_date() - INTERVAL 30 DAYS
+GROUP BY pv.workspace_name, pv.report_name
+HAVING SUM(rv.view_count) > 0
+ORDER BY pages_per_session ASC;
+```
+
+## 1d. Power users per report (v0.3.0, hashed)
+
+Find your internal champions. Hashed UPNs from `user_views_silver` —
+to convert hashes back to names, join against a separately-governed
+"people" table with RLS (do NOT join in the same dataset).
+
+### Spark / Fabric SQL
+
+```sql
+SELECT
+    workspace_name,
+    report_name,
+    user_id_hash,
+    SUM(view_count) AS lifetime_page_views,
+    SUM(distinct_pages_viewed) AS lifetime_distinct_pages,
+    COUNT(DISTINCT view_date) AS active_days
+FROM user_views_silver
+WHERE view_date >= current_date() - INTERVAL 90 DAYS
+GROUP BY workspace_name, report_name, user_id_hash
+HAVING SUM(view_count) >= 50
+ORDER BY lifetime_page_views DESC
+LIMIT 50;
 ```
 
 ## 2. Report half-life — how fast does a report's audience decay?

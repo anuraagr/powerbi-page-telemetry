@@ -10,6 +10,8 @@ env/
 
 # Collector output (reproducible by `python collector.py --mock`)
 etl/out/
+out/
+out-*/
 
 # Local IDE / OS noise
 .vscode/

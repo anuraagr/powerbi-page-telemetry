@@ -1,156 +1,235 @@
 // =====================================================================
-// PageTelemetry.Measures.dax
+// PageTelemetry.Measures.dax  -  v0.3.0 (silver schema 1.1.0)
 //
-// DAX measures for the Power BI semantic model on top of the silver
-// table loaded by PageTelemetry.Connect.pq.
+// DAX measures for the Power BI semantic model on top of the FOUR
+// silver tables loaded by PageTelemetry.Connect.pq:
+//
+//   page_views      fact (page-day grain)
+//   page_catalog    dim  (every page that exists in every report)
+//   report_views    fact (report-day grain)
+//   user_views      fact (hashed-user-day grain)
+//
+// Recommended relationships (Model view):
+//   page_catalog[workspace_id]+[report_id]+[page_id]  --(*:1)-->
+//       composite key into a calc column 'page_key' on both tables, OR
+//   create one HIDDEN [page_key] = workspace_id & "|" & report_id & "|" & page_id
+//   on both page_views and page_catalog, then relate single-direction
+//   page_views[page_key] *-> page_catalog[page_key].
 //
 // Paste into Power BI Desktop via:
 //   Model view -> New measure -> paste each measure individually.
-//
-// Or use Tabular Editor:
-//   File -> Open -> From DB -> connect to the workspace dataset,
-//   then Advanced Scripting console and run as a C# script.
 // =====================================================================
 
 
 // --------- 1. Headline KPIs ----------
 
 Total Views =
-    SUM ( 'page_views_silver'[view_count] )
+    SUM ( 'page_views'[view_count] )
 
 
-Total Page-Sessions =
-    SUM ( 'page_views_silver'[view_count] )
+Unique Pages Viewed =
+    DISTINCTCOUNT ( 'page_views'[page_id] )
 
 
-Unique Pages =
-    DISTINCTCOUNT ( 'page_views_silver'[page_id] )
+Unique Pages Defined =
+    -- v0.3.0: from the catalog. Every page that EXISTS in any report.
+    DISTINCTCOUNT ( 'page_catalog'[page_id] )
 
 
 Unique Reports =
-    DISTINCTCOUNT ( 'page_views_silver'[report_id] )
+    DISTINCTCOUNT ( 'page_views'[report_id] )
 
 
 Unique Workspaces =
-    DISTINCTCOUNT ( 'page_views_silver'[workspace_id] )
+    DISTINCTCOUNT ( 'page_views'[workspace_id] )
 
 
 Avg Dwell Seconds =
     AVERAGEX (
-        'page_views_silver',
-        'page_views_silver'[avg_dwell_seconds]
+        'page_views',
+        'page_views'[avg_dwell_seconds]
     )
 
 
-// --------- 2. Underused-page detection ----------
+// --------- 2. UNUSED-page detection (v0.3.0 — Jon's headline ask) ----------
+// "Which pages in our 60-page Phase III report has nobody opened in 90 days?"
+// Answer: every page in `page_catalog` that has zero matching rows in `page_views`.
+//
+// These measures assume a calculated [page_key] on both tables:
+//   page_key = [workspace_id] & "|" & [report_id] & "|" & [page_id]
+// and a relationship page_views[page_key] *-> page_catalog[page_key].
 
-% Pages Never Viewed =
-    VAR _AllPages =
-        CALCULATE (
-            DISTINCTCOUNT ( 'page_views_silver'[page_id] ),
-            ALL ( 'page_views_silver' )
-        )
-    VAR _ViewedPages =
-        CALCULATE (
-            DISTINCTCOUNT ( 'page_views_silver'[page_id] ),
-            'page_views_silver'[view_count] > 0
+Unused Pages =
+    -- Pages that exist in the catalog but have ZERO views in the
+    -- current filter context. This is the LEFT-JOIN-is-null count.
+    VAR _Viewed =
+        CALCULATETABLE (
+            VALUES ( 'page_catalog'[page_key] ),
+            'page_views'  -- triggers the *->1 relationship
         )
     RETURN
-        DIVIDE ( _AllPages - _ViewedPages, _AllPages )
+        COUNTROWS (
+            EXCEPT (
+                VALUES ( 'page_catalog'[page_key] ),
+                _Viewed
+            )
+        )
 
 
-Underused Pages =
-    // Pages whose lifetime views are <= 10 — i.e. they almost certainly
-    // shouldn't have been built. Threshold is an opinion; adjust to taste.
+% Pages Unused =
+    DIVIDE ( [Unused Pages], [Unique Pages Defined] )
+
+
+Reports With Unused Pages =
+    -- How many reports have AT LEAST ONE unused page? Use this card
+    -- on the Unused Pages page to size the work.
+    VAR _UnusedByReport =
+        ADDCOLUMNS (
+            SUMMARIZE (
+                'page_catalog',
+                'page_catalog'[workspace_id],
+                'page_catalog'[report_id]
+            ),
+            "UnusedHere", [Unused Pages]
+        )
+    RETURN
+        COUNTROWS ( FILTER ( _UnusedByReport, [UnusedHere] > 0 ) )
+
+
+// --------- 3. UNDERUSED-page detection ----------
+
+Underused Pages (<=10 views) =
+    -- Pages that ARE viewed but barely. Companion to [Unused Pages].
     VAR _ByPage =
         SUMMARIZE (
-            'page_views_silver',
-            'page_views_silver'[report_id],
-            'page_views_silver'[page_id],
-            "PageViews", SUM ( 'page_views_silver'[view_count] )
+            'page_views',
+            'page_views'[report_id],
+            'page_views'[page_id],
+            "PageViews", SUM ( 'page_views'[view_count] )
         )
     RETURN
-        COUNTROWS ( FILTER ( _ByPage, [PageViews] <= 10 ) )
+        COUNTROWS ( FILTER ( _ByPage, [PageViews] <= 10 && [PageViews] > 0 ) )
 
 
-// --------- 3. Report-level rollups ----------
+// --------- 4. Report-level rollups (from report_views, v0.3.0) ----------
 
-Pages Per Report =
-    DIVIDE ( [Unique Pages], [Unique Reports] )
+Report Views =
+    -- Total report-level sessions. This is what the legacy report-only
+    -- Admin API exposes. Use side-by-side with [Total Views] to show how
+    -- much detail page-level adds.
+    SUM ( 'report_views'[view_count] )
 
 
-Views Per Page =
-    DIVIDE ( [Total Views], [Unique Pages] )
+Pages Per Session =
+    -- Average pages a user touches per report session. Healthy
+    -- multi-page reports are 3-8; long reports stuck at 1.0 mean the
+    -- entrance page is the whole story.
+    DIVIDE ( [Total Views], [Report Views] )
 
 
-Top Page Share =
-    // What % of a report's traffic concentrates in its single most-viewed
-    // page? Used to flag reports that should be split.
-    VAR _ReportTotal = [Total Views]
-    VAR _TopPage =
-        MAXX (
-            SUMMARIZE (
-                'page_views_silver',
-                'page_views_silver'[page_id],
-                "Views", SUM ( 'page_views_silver'[view_count] )
-            ),
-            [Views]
+Avg Session Seconds =
+    AVERAGEX (
+        'report_views',
+        'report_views'[avg_session_seconds]
+    )
+
+
+// --------- 5. User-level (from user_views, v0.3.0) ----------
+// All UPNs in silver are SHA-256-hashed — see docs/pii-and-retention.md.
+
+Unique Users =
+    DISTINCTCOUNT ( 'user_views'[user_id_hash] )
+
+
+Power Users =
+    -- Users with > 50 views in the current filter context. Useful for
+    -- finding internal champions for a report or capacity SKU sizing.
+    VAR _ByUser =
+        SUMMARIZE (
+            'user_views',
+            'user_views'[user_id_hash],
+            "UserViews", SUM ( 'user_views'[view_count] )
         )
     RETURN
-        DIVIDE ( _TopPage, _ReportTotal )
+        COUNTROWS ( FILTER ( _ByUser, [UserViews] > 50 ) )
 
 
-// --------- 4. Time-series ----------
+Avg Pages Per User =
+    AVERAGEX (
+        VALUES ( 'user_views'[user_id_hash] ),
+        CALCULATE ( SUM ( 'user_views'[distinct_pages_viewed] ) )
+    )
+
+
+// --------- 6. Time-series ----------
 
 Views (Last 7d) =
-    VAR _Max = MAX ( 'page_views_silver'[view_date] )
+    VAR _Max = MAX ( 'page_views'[view_date] )
     RETURN
         CALCULATE (
             [Total Views],
-            'page_views_silver'[view_date] >= _Max - 6,
-            'page_views_silver'[view_date] <= _Max
+            'page_views'[view_date] >= _Max - 6,
+            'page_views'[view_date] <= _Max
         )
 
 
 Views (Last 30d) =
-    VAR _Max = MAX ( 'page_views_silver'[view_date] )
+    VAR _Max = MAX ( 'page_views'[view_date] )
     RETURN
         CALCULATE (
             [Total Views],
-            'page_views_silver'[view_date] >= _Max - 29,
-            'page_views_silver'[view_date] <= _Max
+            'page_views'[view_date] >= _Max - 29,
+            'page_views'[view_date] <= _Max
         )
 
 
 WoW Change % =
-    VAR _Last7  = [Views (Last 7d)]
-    VAR _Max    = MAX ( 'page_views_silver'[view_date] )
-    VAR _Prev7  =
+    VAR _Last7 = [Views (Last 7d)]
+    VAR _Max   = MAX ( 'page_views'[view_date] )
+    VAR _Prev7 =
         CALCULATE (
             [Total Views],
-            'page_views_silver'[view_date] >= _Max - 13,
-            'page_views_silver'[view_date] <= _Max - 7
+            'page_views'[view_date] >= _Max - 13,
+            'page_views'[view_date] <= _Max - 7
         )
     RETURN
         DIVIDE ( _Last7 - _Prev7, _Prev7 )
 
 
-// --------- 5. Capacity / cost attribution ----------
+// --------- 7. Capacity / cost attribution ----------
 
 Views by Capacity =
     SUMMARIZE (
-        'page_views_silver',
-        'page_views_silver'[capacity_name],
+        'page_views',
+        'page_views'[capacity_name],
         "TotalViews", [Total Views]
     )
 
-// --------- 6. Page-ordinal cliff ----------
+
+// --------- 8. Page-ordinal cliff ----------
 // Where do users stop? Useful for trimming long reports.
 
 Cumulative Views at Page Ordinal =
-    VAR _CurrentOrd = MAX ( 'page_views_silver'[page_ordinal] )
+    VAR _CurrentOrd = MAX ( 'page_views'[page_ordinal] )
     RETURN
         CALCULATE (
             [Total Views],
-            'page_views_silver'[page_ordinal] <= _CurrentOrd
+            'page_views'[page_ordinal] <= _CurrentOrd
         )
+
+
+Top Page Share =
+    -- What % of a report's traffic concentrates in its single most-viewed
+    -- page? Used to flag reports that should be split.
+    VAR _ReportTotal = [Total Views]
+    VAR _TopPage =
+        MAXX (
+            SUMMARIZE (
+                'page_views',
+                'page_views'[page_id],
+                "Views", SUM ( 'page_views'[view_count] )
+            ),
+            [Views]
+        )
+    RETURN
+        DIVIDE ( _TopPage, _ReportTotal )

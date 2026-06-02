@@ -39,13 +39,14 @@
 # Pin the collector release. Production should use a tagged release (e.g. v0.1.0);
 # use "main" only during development. The notebook caches the downloaded file to
 # the lakehouse so production keeps running even if GitHub is unreachable.
-COLLECTOR_REF = "v0.2.0"
+COLLECTOR_REF = "v0.2.0"  # bump to v0.3.0 AFTER the v0.3.0 tag is pushed
 KEYVAULT_URL  = "https://<your-keyvault>.vault.azure.net/"
 
 # Silver schema version this notebook is built for. Must match
 # `SILVER_SCHEMA_VERSION` in the collector; if upstream bumps it,
-# revisit the MERGE in the final cell before promoting.
-EXPECTED_SCHEMA_VERSION = "1.0.0"
+# revisit the MERGE blocks in the final cell before promoting.
+# v0.3.0 = additive (3 new silver tables: page_catalog, report_views, user_views)
+EXPECTED_SCHEMA_VERSION = "1.1.0"
 
 # METADATA ********************
 
@@ -173,46 +174,134 @@ if exit_code != 0:
 
 # CELL ********************
 
-# Promote the silver CSV to a Delta table in the attached lakehouse so
-# DirectLake reports pick it up immediately. The collector writes a single
-# fully-conformed CSV at `silver/page_views.csv`.
-from pyspark.sql.functions import col, to_date
+# Promote each of the FOUR silver CSVs (v0.3.0) to a Delta table in the
+# attached lakehouse so DirectLake reports pick them up immediately. The
+# collector writes them to `Files/page_telemetry/silver/`.
+#
+# Schema (silver_schema_version=1.1.0):
+#   page_views.csv      fact (page, day)            MERGE keys: workspace_id, report_id, page_id, view_date
+#   page_catalog.csv    dim  (latest catalog wins)  REPLACE strategy: catalog reflects current state
+#   report_views.csv    fact (report, day)          MERGE keys: workspace_id, report_id, view_date
+#   user_views.csv      fact (hashed user, day)     MERGE keys: report_id, user_id_hash, view_date
+from pyspark.sql.functions import col, to_date, to_timestamp
 
-silver_csv = f"Files/page_telemetry/silver/page_views.csv"
+SILVER_DIR = "Files/page_telemetry/silver"
 
-df = (
-    spark.read                                  # noqa: F821
-         .option("header", "true")
-         .option("inferSchema", "true")
-         .option("comment", "#")               # skip the schema-version preamble
-         .csv(silver_csv)
-         .withColumn("view_date", to_date(col("view_date")))
+def _read_silver_csv(path: str):
+    return (
+        spark.read                                  # noqa: F821
+             .option("header", "true")
+             .option("inferSchema", "true")
+             .option("comment", "#")               # skip the schema-version preamble
+             .csv(path)
+    )
+
+# ---------- 1. page_views (the original v0.1.0 table) ---------------------
+df_pv = (
+    _read_silver_csv(f"{SILVER_DIR}/page_views.csv")
+        .withColumn("view_date", to_date(col("view_date")))
 )
+df_pv.createOrReplaceTempView("incoming_page_views")
 
-# MERGE upsert so partial-day reruns don't duplicate. Schema and grain match
-# what `etl/collector.py` emits: one row per (workspace, report, page, view_date).
-target_table = "page_views_silver"
-df.createOrReplaceTempView("incoming_page_views")
-
-spark.sql(f"""                                  -- noqa: F821
-CREATE TABLE IF NOT EXISTS {target_table}
+spark.sql("""                                       -- noqa: F821
+CREATE TABLE IF NOT EXISTS page_views_silver
 USING DELTA
 AS SELECT * FROM incoming_page_views LIMIT 0
 """)
-
-spark.sql(f"""                                  -- noqa: F821
-MERGE INTO {target_table} t
+spark.sql("""                                       -- noqa: F821
+MERGE INTO page_views_silver t
 USING incoming_page_views s
 ON  t.workspace_id = s.workspace_id
 AND t.report_id    = s.report_id
 AND t.page_id      = s.page_id
 AND t.view_date    = s.view_date
-WHEN MATCHED THEN UPDATE SET *
+WHEN MATCHED     THEN UPDATE SET *
 WHEN NOT MATCHED THEN INSERT *
 """)
 
-row_count = spark.sql(f"SELECT COUNT(*) FROM {target_table}").collect()[0][0]  # noqa: F821
-print(f"page_views_silver now holds {row_count:,} rows")
+# ---------- 2. page_catalog (v0.3.0 — dimension) --------------------------
+# The catalog is a "current state" snapshot of every page that exists in
+# every report. We REPLACE the whole table on each run so renamed /
+# deleted pages drop out — that's the right semantic for a dim that
+# powers the LEFT JOIN against page_views to find unused pages.
+import os
+catalog_path = f"{SILVER_DIR}/page_catalog.csv"
+try:
+    df_pc = (
+        _read_silver_csv(catalog_path)
+            .withColumn("catalog_pulled_at", to_timestamp(col("catalog_pulled_at")))
+    )
+    df_pc.write.mode("overwrite").format("delta").saveAsTable("page_catalog_silver")
+except Exception as e:                              # noqa: BLE001
+    # File may not exist on first v0.3.0 run if an old collector ran first.
+    print(f"page_catalog.csv not loaded ({e!r}); skipping page_catalog_silver replace")
+
+# ---------- 3. report_views (v0.3.0 — fact) -------------------------------
+rv_path = f"{SILVER_DIR}/report_views.csv"
+try:
+    df_rv = (
+        _read_silver_csv(rv_path)
+            .withColumn("view_date", to_date(col("view_date")))
+    )
+    df_rv.createOrReplaceTempView("incoming_report_views")
+    spark.sql("""                                   -- noqa: F821
+    CREATE TABLE IF NOT EXISTS report_views_silver
+    USING DELTA
+    AS SELECT * FROM incoming_report_views LIMIT 0
+    """)
+    spark.sql("""                                   -- noqa: F821
+    MERGE INTO report_views_silver t
+    USING incoming_report_views s
+    ON  t.workspace_id = s.workspace_id
+    AND t.report_id    = s.report_id
+    AND t.view_date    = s.view_date
+    WHEN MATCHED     THEN UPDATE SET *
+    WHEN NOT MATCHED THEN INSERT *
+    """)
+except Exception as e:                              # noqa: BLE001
+    print(f"report_views.csv not loaded ({e!r}); skipping report_views_silver MERGE")
+
+# ---------- 4. user_views (v0.3.0 — fact, hashed PII) ---------------------
+# user_id_hash is the SHA-256 hex prefix of the lowercased UPN (see
+# docs/pii-and-retention.md). Treat this column as PII-equivalent for
+# RLS / retention purposes even though it's not directly reversible.
+uv_path = f"{SILVER_DIR}/user_views.csv"
+try:
+    df_uv = (
+        _read_silver_csv(uv_path)
+            .withColumn("view_date", to_date(col("view_date")))
+    )
+    df_uv.createOrReplaceTempView("incoming_user_views")
+    spark.sql("""                                   -- noqa: F821
+    CREATE TABLE IF NOT EXISTS user_views_silver
+    USING DELTA
+    AS SELECT * FROM incoming_user_views LIMIT 0
+    """)
+    spark.sql("""                                   -- noqa: F821
+    MERGE INTO user_views_silver t
+    USING incoming_user_views s
+    ON  t.workspace_id = s.workspace_id
+    AND t.report_id    = s.report_id
+    AND t.user_id_hash = s.user_id_hash
+    AND t.view_date    = s.view_date
+    WHEN MATCHED     THEN UPDATE SET *
+    WHEN NOT MATCHED THEN INSERT *
+    """)
+except Exception as e:                              # noqa: BLE001
+    print(f"user_views.csv not loaded ({e!r}); skipping user_views_silver MERGE")
+
+# ---------- Row count summary --------------------------------------------
+for tname in (
+    "page_views_silver",
+    "page_catalog_silver",
+    "report_views_silver",
+    "user_views_silver",
+):
+    try:
+        n = spark.sql(f"SELECT COUNT(*) FROM {tname}").collect()[0][0]  # noqa: F821
+        print(f"{tname}: {n:,} rows")
+    except Exception as e:                          # noqa: BLE001
+        print(f"{tname}: not yet created ({e!r})")
 
 # METADATA ********************
 

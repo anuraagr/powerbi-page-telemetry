@@ -28,6 +28,7 @@ REST and XMLA (XMLA accepts the same token via `Password=` when the
 | `GET /v1.0/myorg/admin/groups/{wsId}/reports` | List reports in a workspace | shared bucket |
 | `GET /v1.0/myorg/admin/groups/{wsId}/datasets` | Find the per-workspace **Modern Usage Metrics** semantic model | shared bucket |
 | `POST /v1.0/myorg/groups/{wsId}/datasets/{dsId}/executeQueries` | Execute DAX against the Usage Metrics dataset (REST path, no DLLs) | 120 req/min per user |
+| `GET /v1.0/myorg/groups/{wsId}/reports/{reportId}/pages` | **(v0.3.0)** Page catalog — every page that exists in a report, including pages with zero views. GA endpoint (NOT preview). Tolerates 403/404 for paginated reports. | 120 req/min per user |
 | `GET /v1.0/myorg/admin/capacities` | (optional) Map workspaces → capacities for tier-of-service reporting | shared bucket |
 
 > **There is no public REST endpoint that provisions the Usage Metrics
@@ -182,6 +183,87 @@ If your tenant's schema uses different column names, override
 `DAX_PAGE_VIEWS_TEMPLATE` in `collector.py` or open an issue with
 the introspection output of `EVALUATE INFO.TABLES()` +
 `EVALUATE INFO.COLUMNS()`.
+
+### v0.3.0 — three DAX queries per workspace
+
+v0.3.0 adds two more DAX templates (against the same Modern Usage
+Metrics model, same `executeQueries` endpoint, same throttle bucket).
+Total Power BI REST calls per `(workspace, report)`:
+
+1. `GET /groups/{ws}/reports/{rep}/pages` — page catalog (REST, not DAX)
+2. `POST /datasets/{ds}/executeQueries` with `DAX_PAGE_VIEWS_TEMPLATE`
+3. `POST /datasets/{ds}/executeQueries` with `DAX_REPORT_VIEWS_TEMPLATE`
+4. `POST /datasets/{ds}/executeQueries` with `DAX_USER_VIEWS_TEMPLATE`
+
+Three of the four calls are scoped to a single report via DAX filters,
+so the wire payload is small and the throttle math stays the same per
+report (~4 calls per report × 0.5s = ~2s wall-clock per report ignoring
+network jitter). The collector parallelizes across workspaces but
+serializes within a workspace to stay polite to the per-dataset cache.
+
+#### `DAX_REPORT_VIEWS_TEMPLATE` — report-level grain
+
+```dax
+EVALUATE
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        'Report views'[Report Id],
+        'Report views'[Date],
+        "Views",            SUM('Report views'[Views]),
+        "UniqueUsers",      DISTINCTCOUNT('Report views'[User]),
+        "AvgSessionSeconds",AVERAGE('Report views'[Average view time])
+    ),
+    'Report views'[Date] >= DATE({since_y},{since_m},{since_d}),
+    'Report views'[Date] <= DATE({until_y},{until_m},{until_d}),
+    'Report views'[Report Id] = "{report_id}"
+)
+```
+
+#### `DAX_USER_VIEWS_TEMPLATE` — per-user grain (UPN hashed in Python after the call)
+
+```dax
+EVALUATE
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        'Report page views'[Report Id],
+        'Report page views'[User],
+        'Report page views'[Date],
+        "Views",               SUM('Report page views'[Views]),
+        "DistinctPagesViewed", DISTINCTCOUNT('Report page views'[Report page id])
+    ),
+    'Report page views'[Date] >= DATE({since_y},{since_m},{since_d}),
+    'Report page views'[Date] <= DATE({until_y},{until_m},{until_d}),
+    'Report page views'[Report Id] = "{report_id}"
+)
+```
+
+The `[User]` column is hashed at the collector via SHA-256
+(`upn.strip().lower()`, first 16 hex chars) **before** the row is
+written to silver. Raw UPNs never touch disk.
+
+#### `GET .../reports/{reportId}/pages` — page catalog
+
+```http
+GET https://api.powerbi.com/v1.0/myorg/groups/{wsId}/reports/{reportId}/pages
+Authorization: Bearer <SP token>
+```
+
+Returns:
+
+```json
+{
+  "value": [
+    { "name": "ReportSection1", "displayName": "Overview", "order": 1 },
+    { "name": "ReportSection2", "displayName": "Detail",   "order": 2 },
+    ...
+  ]
+}
+```
+
+Field mapping: REST `name` → `page_id`, `displayName` → `page_name`,
+`order` → `page_ordinal`. 403/404 (paginated reports, some dataflow-
+backed reports) is tolerated — the report is logged to
+`_run_summary.json["errors"]` and the run continues.
 
 ## 6. Throttling, retries, and quota
 

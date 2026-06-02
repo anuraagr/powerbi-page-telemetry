@@ -232,7 +232,8 @@ def test_run_summary_reflects_bootstrap_and_dedup(tmp_path):
     silver = tmp_path / "silver" / "page_views.csv"
     assert silver.exists()
     bronze_partition = Path(summary["bronze_partition"])
-    bronze_files = sorted(p.name for p in bronze_partition.glob("*.csv"))
+    # v0.3.0 layout: bronze/dt=*/page_views/{wsId}__{reportId}.csv
+    bronze_files = sorted(p.name for p in (bronze_partition / "page_views").glob("*.csv"))
     assert bronze_files == ["ws-a__r1.csv", "ws-a__r2.csv"]
     # _run_summary.json on disk must match the returned summary
     on_disk = json.loads((tmp_path / "_run_summary.json").read_text(encoding="utf-8"))

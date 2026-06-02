@@ -80,6 +80,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import shutil
@@ -152,7 +153,7 @@ SAMPLE_CSV = _resolve_sample_csv()
 # Schema version for the silver layer. Bump on breaking changes (column
 # rename / drop / type change). Downstream MERGEs should assert on this
 # in their landing notebook to avoid silent data corruption.
-SILVER_SCHEMA_VERSION = "1.0.0"
+SILVER_SCHEMA_VERSION = "1.1.0"
 
 # ---------------------------------------------------------------------------
 # REST API surface
@@ -190,6 +191,61 @@ CALCULATETABLE(
 ORDER BY 'Report page views'[Date]
 """
 
+# Report-level (no page dimension) DAX. The Modern Usage Metrics model
+# exposes a `Report views` table that's distinct from `Report page views`
+# — same dataset, coarser grain. Used to populate silver/report_views.csv
+# and to power session-level metrics like avg_session_seconds that page-
+# level data can't compute (a 5-page session looks like 5 page rows in
+# 'Report page views' but is one row in 'Report views').
+DAX_REPORT_VIEWS_TEMPLATE = """
+EVALUATE
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        'Report views'[Report Id],
+        'Report views'[Date],
+        "Views",            SUM('Report views'[Views]),
+        "UniqueUsers",      DISTINCTCOUNT('Report views'[User]),
+        "AvgSessionSeconds",AVERAGE('Report views'[Average view time])
+    ),
+    'Report views'[Date] >= DATE({since_y},{since_m},{since_d}),
+    'Report views'[Date] <= DATE({until_y},{until_m},{until_d}),
+    'Report views'[Report Id] = "{report_id}"
+)
+ORDER BY 'Report views'[Date]
+"""
+
+# Per-user grain. UPN comes back raw from DAX; we SHA-256-hash it before
+# it lands in silver so PII never persists. We also surface the count of
+# distinct pages that user touched per day — useful for "who is doing
+# deep exploration vs. who's just landing on the cover page" analyses.
+DAX_USER_VIEWS_TEMPLATE = """
+EVALUATE
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        'Report page views'[Report Id],
+        'Report page views'[User],
+        'Report page views'[Date],
+        "Views",               SUM('Report page views'[Views]),
+        "DistinctPagesViewed", DISTINCTCOUNT('Report page views'[Report page name])
+    ),
+    'Report page views'[Date] >= DATE({since_y},{since_m},{since_d}),
+    'Report page views'[Date] <= DATE({until_y},{until_m},{until_d}),
+    'Report page views'[Report Id] = "{report_id}"
+)
+ORDER BY 'Report page views'[Date]
+"""
+
+# UPN hash truncation. SHA-256 first 16 hex chars = 64 bits of collision
+# resistance, which is overkill for tenant-scale user counts (a tenant
+# with 1M users has p_collision ~= 2.7e-8). Brute-forcing a 16-char hash
+# back to an arbitrary UPN is infeasible. Downstream consumers who NEED
+# to map a hash back to a known person can re-hash that known UPN and
+# look up — but cannot enumerate UPNs from the silver layer.
+def _hash_upn(upn: str | None) -> str:
+    if not upn:
+        return ""
+    return hashlib.sha256(upn.strip().lower().encode("utf-8")).hexdigest()[:16]
+
 # ---------------------------------------------------------------------------
 # Domain types
 # ---------------------------------------------------------------------------
@@ -225,6 +281,59 @@ class PageViewRow:
     avg_dwell_seconds: float
     top_persona: str
 
+
+@dataclass
+class PageCatalogRow:
+    """One row per (workspace_id, report_id, page_id). The full catalog of
+    pages that EXIST in a report at collection time, sourced from
+    `GET /admin/groups/{ws}/reports/{rep}/pages` (a supported GA endpoint).
+    LEFT JOIN this with PageViewRow on (workspace_id, report_id, page_id)
+    to find pages with zero views in a window = unused pages.
+    """
+    workspace_id: str
+    workspace_name: str
+    report_id: str
+    report_name: str
+    page_id: str
+    page_name: str
+    page_ordinal: int
+    catalog_pulled_at: str  # ISO timestamp, run-level
+
+
+@dataclass
+class ReportViewRow:
+    """Report-level aggregate (no page dimension). One row per
+    (workspace_id, report_id, view_date). Sourced from the same Modern
+    Usage Metrics semantic model as PageViewRow, but querying the
+    report-grain table directly so session-level metrics like
+    `avg_session_seconds` aren't biased by page-hop counts."""
+    workspace_id: str
+    workspace_name: str
+    capacity_name: str
+    report_id: str
+    report_name: str
+    view_date: str
+    view_count: int
+    unique_users: int
+    avg_session_seconds: float
+
+
+@dataclass
+class UserViewRow:
+    """Per-user activity, one row per (workspace_id, report_id, user_id_hash, view_date).
+    `user_id_hash` is a deterministic SHA-256 of the user's UPN truncated to 16
+    hex chars — keeps the data joinable across runs and across tables, but PII
+    never lands in silver. Original UPN can be recovered downstream only by
+    re-hashing a known UPN; brute-forcing 16-char SHA-256 is not feasible."""
+    workspace_id: str
+    workspace_name: str
+    report_id: str
+    report_name: str
+    user_id_hash: str
+    view_date: str
+    view_count: int
+    distinct_pages_viewed: int
+
 # ---------------------------------------------------------------------------
 # Adapter interface — same contract for live and mock
 # ---------------------------------------------------------------------------
@@ -255,6 +364,46 @@ class CollectorAdapter:
         report_id: str | None = None,
     ) -> Iterator[PageViewRow]:
         raise NotImplementedError
+
+    def list_report_pages(self, report: Report) -> Iterator[PageCatalogRow]:
+        """Return the full catalog of pages that exist in `report` at
+        collection time. Source: `GET /admin/groups/{ws}/reports/{rep}/pages`
+        — a supported, documented Power BI REST endpoint (not preview).
+        Required to detect unused pages (LEFT JOIN with page_views).
+
+        Default implementation yields nothing so third-party adapters
+        that only implement page_views (the v0.2.x contract) keep working;
+        the silver/page_catalog.csv will just be empty in that case.
+        """
+        return iter(())
+
+    def query_report_views(
+        self,
+        dataset_id: str,
+        since: date,
+        until: date,
+        report_id: str | None = None,
+    ) -> Iterator[ReportViewRow]:
+        """Report-level (no page dimension) views from the same Modern
+        Usage Metrics semantic model as `query_page_views`. Equivalent to
+        the top-level cards in the auto-generated per-report Usage Metrics
+        report.
+
+        Default impl: no rows (v0.2.x back-compat)."""
+        return iter(())
+
+    def query_user_views(
+        self,
+        dataset_id: str,
+        since: date,
+        until: date,
+        report_id: str | None = None,
+    ) -> Iterator[UserViewRow]:
+        """Per-user views (hashed UPN). One row per user/report/date.
+        Powers the User Analytics dashboard page.
+
+        Default impl: no rows (v0.2.x back-compat)."""
+        return iter(())
 
 
 # ---------------------------------------------------------------------------
@@ -632,6 +781,163 @@ class LiveAdapter(CollectorAdapter):
             top_persona="",
         )
 
+    # ---- v0.3.0: page catalog (unused-page detection) ---------------------
+    def list_report_pages(self, report: Report) -> Iterator[PageCatalogRow]:
+        """Return the full roster of pages that exist in `report` at
+        collection time. Source: `GET /v1.0/myorg/groups/{ws}/reports/{rep}/pages`
+        — a supported, documented Power BI REST endpoint (not preview).
+        The SP must be a member of the workspace, which it already needs
+        to be to call executeQueries.
+
+        Used to LEFT JOIN with page_views to find pages that exist but
+        have zero views in a given window = unused pages.
+        """
+        pulled_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        r = self._request(
+            "GET",
+            f"{POWERBI_API}/groups/{report.workspace_id}/reports/{report.id}/pages",
+            allow_status=(403, 404),
+        )
+        if r.status_code in (403, 404):
+            # Not fatal — happens for paginated reports, dataflows, etc.
+            # Leaves the report invisible to unused-page detection but
+            # doesn't break the run.
+            print(
+                f"  ! GET pages for {report.workspace_name}/{report.name} "
+                f"returned HTTP {r.status_code}; skipping catalog for this report.",
+                file=sys.stderr,
+            )
+            return
+        for p in r.json().get("value", []):
+            yield PageCatalogRow(
+                workspace_id=report.workspace_id,
+                workspace_name=report.workspace_name,
+                report_id=report.id,
+                report_name=report.name,
+                page_id=p.get("name", "") or "",
+                page_name=p.get("displayName", "") or "",
+                page_ordinal=int(p.get("order", 0) or 0),
+                catalog_pulled_at=pulled_at,
+            )
+
+    # ---- v0.3.0: report-level grain --------------------------------------
+    def query_report_views(
+        self,
+        dataset_id: str,
+        since: date,
+        until: date,
+        report_id: str | None = None,
+    ) -> Iterator[ReportViewRow]:
+        """Report-level views from the per-workspace UM model's
+        `Report views` table. One row per report/date."""
+        if not dataset_id:
+            return
+        if not report_id:
+            raise ValueError(
+                "query_report_views() requires report_id when called against "
+                "the per-workspace Usage Metrics dataset."
+            )
+        dax = DAX_REPORT_VIEWS_TEMPLATE.format(
+            since_y=since.year, since_m=since.month, since_d=since.day,
+            until_y=until.year, until_m=until.month, until_d=until.day,
+            report_id=report_id,
+        )
+        for row in self._execute_dax(dataset_id, dax):
+            yield from self._coerce_report_view_row(row, dataset_id)
+
+    # ---- v0.3.0: per-user grain ------------------------------------------
+    def query_user_views(
+        self,
+        dataset_id: str,
+        since: date,
+        until: date,
+        report_id: str | None = None,
+    ) -> Iterator[UserViewRow]:
+        """Per-user views (hashed UPN). One row per user/report/date."""
+        if not dataset_id:
+            return
+        if not report_id:
+            raise ValueError(
+                "query_user_views() requires report_id when called against "
+                "the per-workspace Usage Metrics dataset."
+            )
+        dax = DAX_USER_VIEWS_TEMPLATE.format(
+            since_y=since.year, since_m=since.month, since_d=since.day,
+            until_y=until.year, until_m=until.month, until_d=until.day,
+            report_id=report_id,
+        )
+        for row in self._execute_dax(dataset_id, dax):
+            yield from self._coerce_user_view_row(row, dataset_id)
+
+    # ---- shared DAX execution helper -------------------------------------
+    def _execute_dax(self, dataset_id: str, dax: str) -> Iterator[dict]:
+        """POST DAX to executeQueries and yield raw row dicts. Shared by
+        page-views / report-views / user-views queries.
+
+        Centralising this means a future migration to true XMLA via pyadomd
+        only needs to change one place."""
+        ws_id = self._workspace_for_dataset.get(dataset_id)
+        if not ws_id:
+            raise RuntimeError(
+                f"Could not resolve workspace for dataset {dataset_id} - "
+                "ensure_usage_metrics_dataset must be called first."
+            )
+        r = self._request(
+            "POST",
+            f"{POWERBI_API}/groups/{ws_id}/datasets/{dataset_id}/executeQueries",
+            json_body={
+                "queries": [{"query": dax}],
+                "serializerSettings": {"includeNulls": False},
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=120,
+        )
+        body = r.json()
+        tables = body.get("results", [{}])[0].get("tables", [{}])
+        yield from tables[0].get("rows", [])
+
+    def _coerce_report_view_row(self, raw: dict, dataset_id: str) -> Iterator[ReportViewRow]:
+        """Map an executeQueries row to ReportViewRow. Driver's _enrich_*
+        step will fill workspace/report metadata from earlier enumeration."""
+        def g(*keys: str, default=None):
+            for k in keys:
+                if k in raw and raw[k] is not None:
+                    return raw[k]
+            return default
+        view_date = str(g("'Report views'[Date]", "[Date]") or "")[:10]
+        yield ReportViewRow(
+            workspace_id="",
+            workspace_name="",
+            capacity_name="",
+            report_id=g("'Report views'[Report Id]", default="") or "",
+            report_name="",
+            view_date=view_date,
+            view_count=int(g("[Views]", default=0) or 0),
+            unique_users=int(g("[UniqueUsers]", default=0) or 0),
+            avg_session_seconds=float(g("[AvgSessionSeconds]", default=0.0) or 0.0),
+        )
+
+    def _coerce_user_view_row(self, raw: dict, dataset_id: str) -> Iterator[UserViewRow]:
+        """Map an executeQueries row to UserViewRow. UPN is hashed
+        IMMEDIATELY — raw UPN never leaves this function."""
+        def g(*keys: str, default=None):
+            for k in keys:
+                if k in raw and raw[k] is not None:
+                    return raw[k]
+            return default
+        view_date = str(g("'Report page views'[Date]", "[Date]") or "")[:10]
+        upn = g("'Report page views'[User]", default="") or ""
+        yield UserViewRow(
+            workspace_id="",
+            workspace_name="",
+            report_id=g("'Report page views'[Report Id]", default="") or "",
+            report_name="",
+            user_id_hash=_hash_upn(str(upn)),
+            view_date=view_date,
+            view_count=int(g("[Views]", default=0) or 0),
+            distinct_pages_viewed=int(g("[DistinctPagesViewed]", default=0) or 0),
+        )
+
     def _query_via_pyadomd(
         self,
         dataset_id: str,
@@ -678,6 +984,18 @@ class MockAdapter(CollectorAdapter):
         with csv_path.open("r", encoding="utf-8") as f:
             for r in csv.DictReader(f):
                 self._rows.append(r)
+        # Intentionally-unused pages overlay. Lives next to the sample CSV.
+        # Format: { "<report_id>": [ {"page_id": "...", "page_name": "...", "page_ordinal": N}, ... ] }
+        # These are added to the page catalog but NEVER to page_views, so
+        # the LEFT JOIN proves unused-page detection works end-to-end.
+        self._unused_overlay: dict[str, list[dict]] = {}
+        overlay_path = csv_path.parent / "unused_pages.json"
+        if overlay_path.exists():
+            try:
+                self._unused_overlay = json.loads(overlay_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                # Bad overlay file shouldn't break the run; just no unused pages.
+                self._unused_overlay = {}
 
     @classmethod
     def max_csv_date(cls, csv_path: Path = SAMPLE_CSV) -> date:
@@ -763,6 +1081,152 @@ class MockAdapter(CollectorAdapter):
                 top_persona=r["top_persona"],
             )
 
+    # ---- v0.3.0 mock implementations -------------------------------------
+    def list_report_pages(self, report: Report) -> Iterator[PageCatalogRow]:
+        """Synthesize the page catalog from page_views rows (every page
+        that ever had a view), PLUS the intentionally-unused-pages overlay
+        (pages that exist but have zero views — for testing unused detection).
+        """
+        # Deterministic timestamp so mock-mode silver is byte-reproducible
+        # across machines and Python versions (real LiveAdapter uses wall clock).
+        pulled_at = self.max_csv_date().isoformat() + "T00:00:00+00:00"
+        seen: set[str] = set()
+        for r in self._rows:
+            if r["report_id"] != report.id:
+                continue
+            if r["page_id"] in seen:
+                continue
+            seen.add(r["page_id"])
+            yield PageCatalogRow(
+                workspace_id=r["workspace_id"],
+                workspace_name=r["workspace_name"],
+                report_id=r["report_id"],
+                report_name=r["report_name"],
+                page_id=r["page_id"],
+                page_name=r["page_name"],
+                page_ordinal=int(r["page_ordinal"]),
+                catalog_pulled_at=pulled_at,
+            )
+        # Add the intentionally-unused pages — these will have NO matching
+        # page_views rows, so a LEFT JOIN surfaces them as "unused".
+        for extra in self._unused_overlay.get(report.id, []):
+            pid = extra.get("page_id", "")
+            if pid in seen:
+                continue
+            yield PageCatalogRow(
+                workspace_id=report.workspace_id,
+                workspace_name=report.workspace_name,
+                report_id=report.id,
+                report_name=report.name,
+                page_id=pid,
+                page_name=extra.get("page_name", ""),
+                page_ordinal=int(extra.get("page_ordinal", 0) or 0),
+                catalog_pulled_at=pulled_at,
+            )
+
+    def query_report_views(
+        self,
+        dataset_id: str,
+        since: date,
+        until: date,
+        report_id: str | None = None,
+    ) -> Iterator[ReportViewRow]:
+        """Synthesize report-level rows by aggregating page_views by
+        (report, date). Note: avg_session_seconds in mock-mode is the
+        avg of page-level dwell weighted by views — it's an approximation
+        of session time, not a true measurement (the real UM model has
+        a dedicated `Report views`.[Average view time] measure)."""
+        rep_id = report_id or dataset_id.split("::", 1)[1]
+        # (report_id, view_date) -> aggregates
+        agg: dict[tuple, dict] = {}
+        for r in self._rows:
+            if r["report_id"] != rep_id:
+                continue
+            d = date.fromisoformat(r["view_date"])
+            if d < since or d > until:
+                continue
+            key = (r["report_id"], r["view_date"])
+            slot = agg.setdefault(key, {
+                "workspace_id": r["workspace_id"],
+                "workspace_name": r["workspace_name"],
+                "capacity_name": r["capacity_name"],
+                "report_name": r["report_name"],
+                "views": 0, "users_seen": set(), "dwell_weighted_sum": 0.0,
+            })
+            v = int(r["view_count"])
+            slot["views"] += v
+            slot["dwell_weighted_sum"] += v * float(r["avg_dwell_seconds"])
+            # unique_users at page grain isn't user-level — best we can do
+            # without raw UPNs is take the max across pages (a lower bound
+            # on report-level unique users).
+            slot.setdefault("max_pageusers", 0)
+            slot["max_pageusers"] = max(slot["max_pageusers"], int(r["unique_users"]))
+        for (rid, d), s in sorted(agg.items(), key=lambda kv: kv[0][1]):
+            yield ReportViewRow(
+                workspace_id=s["workspace_id"],
+                workspace_name=s["workspace_name"],
+                capacity_name=s["capacity_name"],
+                report_id=rid,
+                report_name=s["report_name"],
+                view_date=d,
+                view_count=s["views"],
+                unique_users=s["max_pageusers"],
+                avg_session_seconds=(
+                    s["dwell_weighted_sum"] / s["views"] if s["views"] else 0.0
+                ),
+            )
+
+    def query_user_views(
+        self,
+        dataset_id: str,
+        since: date,
+        until: date,
+        report_id: str | None = None,
+    ) -> Iterator[UserViewRow]:
+        """Synthesize per-user rows. The mock CSV doesn't carry real UPNs,
+        so we manufacture them deterministically from (report_id, page_ordinal,
+        view_date) — same input always produces the same hash, so silver
+        hashes stay reproducible across runs. Distinct page count is the
+        number of distinct page_ordinals that report saw on that date."""
+        rep_id = report_id or dataset_id.split("::", 1)[1]
+        # (report_id, hashed_user, view_date) -> aggregates
+        agg: dict[tuple, dict] = {}
+        for r in self._rows:
+            if r["report_id"] != rep_id:
+                continue
+            d = date.fromisoformat(r["view_date"])
+            if d < since or d > until:
+                continue
+            views = int(r["view_count"])
+            # Distribute the page's views across N synthetic users where
+            # N == unique_users on that page/day. Cap at 1 to avoid zero.
+            n_users = max(1, int(r["unique_users"]))
+            # Synthesize a deterministic UPN per (report, view_date, user_index).
+            for i in range(n_users):
+                synth_upn = f"user{i:03d}@mock-{r['workspace_id'][:8]}"
+                uhash = _hash_upn(synth_upn)
+                key = (r["report_id"], uhash, r["view_date"])
+                slot = agg.setdefault(key, {
+                    "workspace_id": r["workspace_id"],
+                    "workspace_name": r["workspace_name"],
+                    "report_name": r["report_name"],
+                    "views": 0, "pages": set(),
+                })
+                # Each synthetic user contributes proportional views.
+                slot["views"] += max(1, views // n_users)
+                slot["pages"].add(r["page_id"])
+        for (rid, uhash, d), s in sorted(agg.items(), key=lambda kv: (kv[0][2], kv[0][1])):
+            yield UserViewRow(
+                workspace_id=s["workspace_id"],
+                workspace_name=s["workspace_name"],
+                report_id=rid,
+                report_name=s["report_name"],
+                user_id_hash=uhash,
+                view_date=d,
+                view_count=s["views"],
+                distinct_pages_viewed=len(s["pages"]),
+            )
+
 
 # ---------------------------------------------------------------------------
 # Driver
@@ -789,14 +1253,24 @@ def _rmtree_resilient(path: Path, attempts: int = 5) -> None:
 
 def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> dict:
     """Drive the adapter: enumerate, collect, partition bronze by date,
-    emit a conformed silver CSV and a `_run_summary.json` with the
+    emit four conformed silver CSVs and a `_run_summary.json` with the
     silver schema version.
 
     Bronze layout:
-        bronze/dt=YYYY-MM-DD/{wsId}__{reportId}.csv
+        bronze/dt=YYYY-MM-DD/page_views/{wsId}__{reportId}.csv
+        bronze/dt=YYYY-MM-DD/page_catalog/{wsId}__{reportId}.csv
+        bronze/dt=YYYY-MM-DD/report_views/{wsId}__{reportId}.csv
+        bronze/dt=YYYY-MM-DD/user_views/{wsId}__{reportId}.csv
 
-    Silver layout:
-        silver/page_views.csv   (a `# silver_schema_version=...` comment line precedes the header)
+    Silver layout (each preceded by a `# silver_schema_version=...` comment):
+        silver/page_views.csv       (one row per ws/report/page/date)
+        silver/page_catalog.csv     (one row per ws/report/page — page roster)
+        silver/report_views.csv     (one row per ws/report/date — no page dim)
+        silver/user_views.csv       (one row per ws/report/user_hash/date)
+
+    Unused-page detection = LEFT JOIN(page_catalog, page_views)
+                              ON (workspace_id, report_id, page_id)
+                            WHERE views IS NULL or 0.
     """
     bronze = out_dir / "bronze"
     silver = out_dir / "silver"
@@ -810,17 +1284,34 @@ def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> d
     if bronze_run.exists():
         _rmtree_resilient(bronze_run)
     bronze_run.mkdir(parents=True, exist_ok=True)
+    # One sub-folder per silver feed so bronze stays browsable.
+    for feed in ("page_views", "page_catalog", "report_views", "user_views"):
+        (bronze_run / feed).mkdir(parents=True, exist_ok=True)
 
     summary = {
         "schema_version": SILVER_SCHEMA_VERSION,
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "since": since.isoformat(), "until": until.isoformat(),
-        "workspaces": 0, "reports": 0, "datasets": 0, "rows": 0,
+        "workspaces": 0, "reports": 0, "datasets": 0,
+        "page_view_rows": 0,
+        "page_catalog_rows": 0,
+        "report_view_rows": 0,
+        "user_view_rows": 0,
+        # Derived metric — the headline value-add for v0.3.0. Computed
+        # after all reports finish (needs the LEFT JOIN to run).
+        "unused_pages": 0,
+        "reports_with_unused_pages": 0,
+        # Back-compat: keep `rows` as a synonym for page_view_rows so any
+        # v0.2.x dashboard reading the summary still works.
+        "rows": 0,
         "reports_skipped_no_bootstrap": 0,
         "workspaces_not_bootstrapped": [],
         "errors": [],
     }
-    all_rows: list[PageViewRow] = []
+    all_page_view_rows: list[PageViewRow] = []
+    all_page_catalog_rows: list[PageCatalogRow] = []
+    all_report_view_rows: list[ReportViewRow] = []
+    all_user_view_rows: list[UserViewRow] = []
     seen_dataset_ids: set[str] = set()
 
     for ws in adapter.list_workspaces():
@@ -838,22 +1329,44 @@ def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> d
                 if ds_id not in seen_dataset_ids:
                     summary["datasets"] += 1
                     seen_dataset_ids.add(ds_id)
-                raw_rows = list(
+                # Pull all 4 feeds for this report.
+                pv_raw = list(
                     adapter.query_page_views(ds_id, since, until, report_id=rep.id)
+                )
+                pc_raw = list(adapter.list_report_pages(rep))
+                rv_raw = list(
+                    adapter.query_report_views(ds_id, since, until, report_id=rep.id)
+                )
+                uv_raw = list(
+                    adapter.query_user_views(ds_id, since, until, report_id=rep.id)
                 )
             except Exception as e:
                 msg = f"{rep.workspace_name}/{rep.name}: {type(e).__name__}: {e}"
                 summary["errors"].append(msg)
                 print(f"  ! {msg}")
                 continue
-            # Enrich any rows missing workspace/report metadata (LiveAdapter
-            # returns bare DAX rows; MockAdapter pre-fills them).
-            rep_rows = [_enrich_row(r, ws, rep) for r in raw_rows]
-            out = bronze_run / f"{rep.workspace_id}__{rep.id}.csv"
-            _write_rows(out, rep_rows)
-            all_rows.extend(rep_rows)
-            summary["rows"] += len(rep_rows)
-            print(f"  [report] {rep.name}: {len(rep_rows):,} rows -> {out.parent.name}/{out.name}")
+            # Enrich rows that came from the live DAX path with bare identifiers.
+            pv_rows = [_enrich_page_view(r, ws, rep) for r in pv_raw]
+            pc_rows = list(pc_raw)  # always pre-enriched from REST
+            rv_rows = [_enrich_report_view(r, ws, rep) for r in rv_raw]
+            uv_rows = [_enrich_user_view(r, ws, rep) for r in uv_raw]
+            _write_rows(bronze_run / "page_views"    / f"{rep.workspace_id}__{rep.id}.csv", pv_rows)
+            _write_rows(bronze_run / "page_catalog"  / f"{rep.workspace_id}__{rep.id}.csv", pc_rows)
+            _write_rows(bronze_run / "report_views"  / f"{rep.workspace_id}__{rep.id}.csv", rv_rows)
+            _write_rows(bronze_run / "user_views"    / f"{rep.workspace_id}__{rep.id}.csv", uv_rows)
+            all_page_view_rows.extend(pv_rows)
+            all_page_catalog_rows.extend(pc_rows)
+            all_report_view_rows.extend(rv_rows)
+            all_user_view_rows.extend(uv_rows)
+            summary["page_view_rows"]    += len(pv_rows)
+            summary["page_catalog_rows"] += len(pc_rows)
+            summary["report_view_rows"]  += len(rv_rows)
+            summary["user_view_rows"]    += len(uv_rows)
+            print(
+                f"  [report] {rep.name}: "
+                f"pv={len(pv_rows):,} cat={len(pc_rows)} "
+                f"rv={len(rv_rows)} uv={len(uv_rows)}"
+            )
 
     # Pull the bootstrap-needed list off the adapter if it tracked one.
     not_bootstrapped = getattr(adapter, "workspaces_not_bootstrapped", None)
@@ -864,11 +1377,38 @@ def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> d
             n for n in not_bootstrapped if not (n in seen or seen.add(n))
         ]
 
-    # Silver: one conformed CSV across the tenant, prefaced with the schema-version
-    # comment so downstream MERGEs can assert compatibility.
-    silver_path = silver / "page_views.csv"
-    _write_rows(silver_path, all_rows, schema_version_comment=True)
-    summary["silver_path"] = str(silver_path)
+    # Compute unused-pages headline metric: pages that exist in the
+    # catalog but have ZERO page-view rows in the collection window.
+    viewed_page_keys = {
+        (r.workspace_id, r.report_id, r.page_id) for r in all_page_view_rows
+    }
+    unused_keys = {
+        (c.workspace_id, c.report_id, c.page_id) for c in all_page_catalog_rows
+        if (c.workspace_id, c.report_id, c.page_id) not in viewed_page_keys
+    }
+    summary["unused_pages"] = len(unused_keys)
+    summary["reports_with_unused_pages"] = len({(ws, rep) for (ws, rep, _) in unused_keys})
+
+    # Silver: 4 conformed CSVs across the tenant, each prefaced with the
+    # schema-version comment so downstream MERGEs can assert compatibility.
+    pv_path  = silver / "page_views.csv"
+    pc_path  = silver / "page_catalog.csv"
+    rv_path  = silver / "report_views.csv"
+    uv_path  = silver / "user_views.csv"
+    _write_rows(pv_path, all_page_view_rows,    schema_version_comment=True)
+    _write_rows(pc_path, all_page_catalog_rows, schema_version_comment=True)
+    _write_rows(rv_path, all_report_view_rows,  schema_version_comment=True)
+    _write_rows(uv_path, all_user_view_rows,    schema_version_comment=True)
+    summary["silver_paths"] = {
+        "page_views":   str(pv_path),
+        "page_catalog": str(pc_path),
+        "report_views": str(rv_path),
+        "user_views":   str(uv_path),
+    }
+    # Back-compat: keep the v0.2.x `silver_path` key (page_views only)
+    # so any external dashboard reading the summary keeps working.
+    summary["silver_path"] = str(pv_path)
+    summary["rows"] = summary["page_view_rows"]
     summary["bronze_partition"] = str(bronze_run)
     summary["ended_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -878,7 +1418,7 @@ def run(adapter: CollectorAdapter, since: date, until: date, out_dir: Path) -> d
     return summary
 
 
-def _enrich_row(row: PageViewRow, ws: Workspace, rep: Report) -> PageViewRow:
+def _enrich_page_view(row: PageViewRow, ws: Workspace, rep: Report) -> PageViewRow:
     """Patch in workspace/report context for rows that came from the live
     DAX path with bare identifiers. MockAdapter rows are already complete."""
     if row.workspace_id and row.workspace_name and row.report_name:
@@ -901,9 +1441,55 @@ def _enrich_row(row: PageViewRow, ws: Workspace, rep: Report) -> PageViewRow:
     )
 
 
-def _write_rows(path: Path, rows: Iterable[PageViewRow], *, schema_version_comment: bool = False) -> None:
+# Back-compat alias for code (or tests) that imported the v0.2.x name.
+_enrich_row = _enrich_page_view
+
+
+def _enrich_report_view(row: ReportViewRow, ws: Workspace, rep: Report) -> ReportViewRow:
+    if row.workspace_id and row.workspace_name and row.report_name:
+        return row
+    return ReportViewRow(
+        workspace_id=row.workspace_id or ws.id,
+        workspace_name=row.workspace_name or ws.name,
+        capacity_name=row.capacity_name or (ws.capacity_name or ""),
+        report_id=row.report_id or rep.id,
+        report_name=row.report_name or rep.name,
+        view_date=row.view_date,
+        view_count=row.view_count,
+        unique_users=row.unique_users,
+        avg_session_seconds=row.avg_session_seconds,
+    )
+
+
+def _enrich_user_view(row: UserViewRow, ws: Workspace, rep: Report) -> UserViewRow:
+    if row.workspace_id and row.workspace_name and row.report_name:
+        return row
+    return UserViewRow(
+        workspace_id=row.workspace_id or ws.id,
+        workspace_name=row.workspace_name or ws.name,
+        report_id=row.report_id or rep.id,
+        report_name=row.report_name or rep.name,
+        user_id_hash=row.user_id_hash,
+        view_date=row.view_date,
+        view_count=row.view_count,
+        distinct_pages_viewed=row.distinct_pages_viewed,
+    )
+
+
+def _write_rows(
+    path: Path,
+    rows: Iterable,
+    *,
+    schema_version_comment: bool = False,
+) -> None:
     rows = list(rows)
     if not rows:
+        # For silver files we still want an empty file with the schema-version
+        # comment so downstream MERGEs can detect the file exists and is
+        # compatible. Bronze writes (no schema comment) just skip empty files.
+        if schema_version_comment:
+            with path.open("w", newline="", encoding="utf-8") as f:
+                f.write(f"# silver_schema_version={SILVER_SCHEMA_VERSION}\n")
         return
     fields = list(asdict(rows[0]).keys())
     with path.open("w", newline="", encoding="utf-8") as f:

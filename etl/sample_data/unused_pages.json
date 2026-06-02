@@ -1,0 +1,22 @@
+{
+  "_comment": "Pages that EXIST in the report catalog but have ZERO views in the page_views.csv. Used by MockAdapter to demonstrate unused-page detection end-to-end. These are the kinds of pages Jon's clinical-trial reports likely have today: legacy pages from earlier protocol versions, drill-throughs nobody clicks into, deprecated sections, draft pages, etc. The unused-page detection query LEFT JOINs page_catalog with page_views and surfaces these.",
+
+  "rep-clin-study101": [
+    {"page_id": "p101-legacy-prot-v1",  "page_name": "Protocol v1 (legacy)",            "page_ordinal": 56},
+    {"page_id": "p101-old-data-cuts",   "page_name": "Pre-amendment data cuts",         "page_ordinal": 57},
+    {"page_id": "p101-debug-internal",  "page_name": "DEBUG: per-site raw rates",       "page_ordinal": 58},
+    {"page_id": "p101-decom-funnel-v2", "page_name": "Enrollment funnel (deprecated)",  "page_ordinal": 59},
+    {"page_id": "p101-export-archive",  "page_name": "Quarterly export archive",        "page_ordinal": 60}
+  ],
+
+  "rep-clin-study202": [
+    {"page_id": "p202-old-saerev",      "page_name": "SAE review (pre-CSV5)",            "page_ordinal": 32},
+    {"page_id": "p202-draft-prot-v3",   "page_name": "Protocol amendment v3 (draft)",    "page_ordinal": 33},
+    {"page_id": "p202-deprec-narrative","page_name": "Site narrative (deprecated)",      "page_ordinal": 34}
+  ],
+
+  "rep-clin-study303": [
+    {"page_id": "p303-old-pk-bins",     "page_name": "PK binning v1 (replaced by v2)",   "page_ordinal": 23},
+    {"page_id": "p303-decom-dosing",    "page_name": "Dose-escalation rules (decommissioned)", "page_ordinal": 24}
+  ]
+}

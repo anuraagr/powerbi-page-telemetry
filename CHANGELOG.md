@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### Added (the headline: page_catalog → unused-page detection)
+
+- **`silver/page_catalog.csv`** — every page that exists in every report,
+  sourced from `GET /v1.0/myorg/groups/{ws}/reports/{rep}/pages` (a
+  documented, GA Power BI REST endpoint — NOT preview, NOT DAX). This
+  is the table that lets a LEFT JOIN against `page_views` surface
+  pages with **zero views in the window** — directly answering Jon at
+  Incyte's "which pages in our 60-page clinical-trial report has
+  nobody opened?" question, which the v0.2.x page-views-only model
+  couldn't.
+- **`silver/report_views.csv`** — report-level grain (no page
+  dimension) from the `'Report views'` table in the same Modern Usage
+  Metrics semantic model. Gives parity with the cards in the existing
+  auto-generated per-report Usage Metrics report and enables
+  `[Pages Per Session]` as a measure.
+- **`silver/user_views.csv`** — per-user grain (hashed UPN). Each row
+  is one `(report, user_id_hash, day)` with `view_count` and
+  `distinct_pages_viewed`. Powers the new User Analytics dashboard
+  page. UPNs are **never** written to disk — only the SHA-256-of-
+  lowercased-UPN, first 16 hex chars, is silvered.
+- **3 new dataclasses + 3 new adapter methods**: `PageCatalogRow`,
+  `ReportViewRow`, `UserViewRow`; `CollectorAdapter.list_report_pages()`,
+  `query_report_views()`, `query_user_views()`. Defaults yield nothing
+  on the base class so v0.2.x adapter consumers stay source-compatible.
+- **`_run_summary.json` new keys** (additive — v0.2.x keys preserved):
+  `page_view_rows`, `page_catalog_rows`, `report_view_rows`,
+  `user_view_rows`, `unused_pages`, `reports_with_unused_pages`,
+  `silver_paths` (dict of all 4 file paths).
+- **`etl/sample_data/unused_pages.json`** — intentionally-dead-pages
+  overlay for mock mode. Names like "Protocol v1 (legacy)",
+  "DEBUG: per-site raw rates", "Enrollment funnel (deprecated)"
+  across the 3 clinical-trial reports. Makes the v0.3.0 demo punch
+  visible end-to-end with `--mock`.
+- **`dashboard/PowerBI/`** rewritten for v0.3.0:
+  - `PageTelemetry.Connect.pq` now returns a **record** with all 4
+    silver tables and a single connection-mode toggle for
+    fabric/blob/local. Schema-version pin bumped to `1.1.0`.
+  - `PageTelemetry.Measures.dax` adds `[Unused Pages]`,
+    `[% Pages Unused]`, `[Reports With Unused Pages]`,
+    `[Pages Per Session]`, `[Avg Session Seconds]`, `[Unique Users]`,
+    `[Power Users]`, `[Avg Pages Per User]` measures. Refactored
+    page-views measures to reference unqualified table names so the
+    measures work whether you load as `page_views_silver` or
+    `page_views`.
+  - `README.md` rewritten with a 5-page recommended layout
+    (Overview / Report Drill / Page Drill / **Unused Pages** /
+    User Analytics) and step-by-step setup including the recommended
+    `page_key` calculated column for the relationship.
+- **`deploy/fabric-notebook/PageTelemetryCollector.Notebook.py`** —
+  MERGE blocks for all 4 silver tables. `page_views_silver`,
+  `report_views_silver`, `user_views_silver` use INSERT/UPDATE MERGE.
+  `page_catalog_silver` uses REPLACE (whole-table overwrite) because
+  the catalog is a current-state dimension, not a fact table.
+  `EXPECTED_SCHEMA_VERSION = "1.1.0"`. `COLLECTOR_REF` stays at
+  `v0.2.0` and bumps to `v0.3.0` in a follow-up commit after the tag
+  is pushed (chicken-and-egg).
+- **`tests/test_v030_grains.py`** — 20 new tests covering the new
+  schema, summary keys, byte-identical mock determinism for all 4
+  silver files, the LEFT-JOIN math for unused-page detection, REST
+  endpoint correctness with 403 tolerance, UPN hashing case-
+  insensitivity and blank handling, and column-shape guarantees on
+  each new silver table.
+
+### Changed
+
+- **`SILVER_SCHEMA_VERSION = "1.1.0"`** — additive minor bump. Any
+  v0.2.x reader of `page_views.csv` keeps working (columns unchanged);
+  new readers can use the 3 new silver tables.
+- **Bronze layout** — `bronze/dt=YYYY-MM-DD/{wsId}__{reportId}.csv`
+  in v0.2.x is now `bronze/dt=YYYY-MM-DD/{feed}/{wsId}__{reportId}.csv`
+  with `feed ∈ {page_views, page_catalog, report_views, user_views}`.
+  Silver is the contract — no external consumer reads bronze directly —
+  but if you have a bespoke bronze reader, update its path pattern.
+- **`_write_rows`** now writes an empty-but-header file (with schema
+  comment) when the rows iterator is empty, so downstream MERGE jobs
+  can distinguish "file exists, schema compatible, no new data" from
+  "collector didn't run / file missing".
+
+### Documentation
+
+- Rewrote `docs/data-dictionary.md` for v0.3.0: 4 tables (was 1),
+  source-of-truth pointer updated to the Modern Usage Metrics
+  per-workspace semantic model, full PII column on every column,
+  full `_run_summary.json` schema with v0.2.x back-compat aliases
+  called out.
+
 ## [0.2.0]
 
 ### Breaking (live mode only — mock mode, silver schema, downstream all unchanged)
@@ -181,4 +269,5 @@ options + offline demo + customer-readiness pass.
 
 [0.1.0]: https://github.com/anuraagr/powerbi-page-telemetry/releases/tag/v0.1.0
 [0.2.0]: https://github.com/anuraagr/powerbi-page-telemetry/releases/tag/v0.2.0
-[Unreleased]: https://github.com/anuraagr/powerbi-page-telemetry/compare/v0.2.0...HEAD
+[0.3.0]: https://github.com/anuraagr/powerbi-page-telemetry/releases/tag/v0.3.0
+[Unreleased]: https://github.com/anuraagr/powerbi-page-telemetry/compare/v0.3.0...HEAD

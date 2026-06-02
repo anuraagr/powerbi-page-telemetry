@@ -75,8 +75,13 @@ def test_bronze_is_partitioned_by_date(tmp_path: Path) -> None:
     partitions = list(bronze.iterdir())
     assert len(partitions) == 1
     assert partitions[0].name.startswith("dt=")
-    files = list(partitions[0].glob("*.csv"))
-    assert len(files) == EXPECTED_REPORTS
+    # v0.3.0 layout: bronze/dt=*/page_views/{wsId}__{reportId}.csv
+    page_view_files = list((partitions[0] / "page_views").glob("*.csv"))
+    assert len(page_view_files) == EXPECTED_REPORTS
+    # All 4 feed sub-folders should exist (catalog/report_views/user_views may
+    # have fewer files since they only land when the adapter emits rows).
+    for feed in ("page_views", "page_catalog", "report_views", "user_views"):
+        assert (partitions[0] / feed).is_dir(), f"missing bronze sub-folder: {feed}"
 
 
 def test_mock_max_csv_date_is_deterministic() -> None:

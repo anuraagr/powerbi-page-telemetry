@@ -29,6 +29,9 @@ packs) — this means:
 
 - ❌ No way to see **which pages** are actually used across the tenant
 - ❌ No way to find **never-viewed pages** sitting in production reports
+  (a 60-page clinical-trial report can have 5-10 dead pages nobody opens)
+- ❌ No way to combine **page**, **report**, and **user** grains into a
+  single store you can ad-hoc-query without re-running per report
 - ❌ No way to feed page-level signals into a central monitoring report,
       Data Activator alert, or governance workflow
 - ❌ Report-level view counts dramatically understate effort lost on
@@ -51,10 +54,20 @@ today** using only documented Microsoft APIs:
      REST `executeQueries` endpoint with a parameterised DAX
      `CALCULATETABLE(SUMMARIZECOLUMNS(...))` (server-side aggregation,
      pushed-down filters, only summary rows transit the wire).
+   - Calls `GET /v1.0/myorg/groups/{ws}/reports/{rep}/pages` (a GA,
+     non-preview REST endpoint) to land a **page catalog** — every
+     page that exists in every report, including pages with zero
+     views. A LEFT JOIN against `page_views` gives you the
+     **unused-page list** Jon at Incyte asked for.
+   - Pulls **4 grains** into 4 silver CSVs (v0.3.0):
+     `page_views` (page-day), `page_catalog` (every page that exists),
+     `report_views` (report-day), `user_views` (per-hashed-user-day).
    - Lands rows in a `bronze/` → `silver/` layout that drops cleanly into
      a Fabric Lakehouse, ADLS Gen2, or local disk.
    - Ships with a `MockAdapter` so you can run the whole pipeline on a
-     laptop with no tenant access.
+     laptop with no tenant access. The mock data deliberately includes
+     **10 unused pages** across 3 clinical-trial reports so the
+     unused-page flow is demonstrable end-to-end.
 
 2. **`dashboard/PageUsageDashboard.html`** — a self-contained HTML
    dashboard (Chart.js, no build step, no server) that demonstrates the
@@ -96,8 +109,8 @@ flowchart LR
     end
 
     subgraph Storage["Storage"]
-        B[("bronze/<br/>dt=YYYY-MM-DD/")]
-        S[("silver/<br/>page_views.csv<br/>schema v1.0.0")]
+        B[("bronze/dt=YYYY-MM-DD/<br/>{page_views,page_catalog,<br/>report_views,user_views}/")]
+        S[("silver/<br/>page_views.csv ·<br/>page_catalog.csv ·<br/>report_views.csv ·<br/>user_views.csv<br/>schema v1.1.0")]
     end
 
     subgraph Consumers["Consumers"]
@@ -289,10 +302,15 @@ What's in the sample:
 - **15 reports** ranging from a 6-page daily ops dashboard to a
   **60-page Phase III clinical trial report** (STUDY-101).
 - **90 days** of daily page-view rows with realistic seasonality
-  (weekday peaks), Zipf-distributed page popularity, and a deliberate
-  **9 pages that never get viewed** across the tenant (5 appendix pages
-  on the long clinical trial report alone) — exactly the kind of waste
-  page-level telemetry is designed to surface.
+  (weekday peaks), Zipf-distributed page popularity.
+- **10 intentionally-unused pages** across the 3 clinical-trial
+  reports (`unused_pages.json` overlay), with names like
+  "Protocol v1 (legacy)", "DEBUG: per-site raw rates",
+  "Enrollment funnel (deprecated)" — these show up in
+  `page_catalog.csv` but have ZERO rows in `page_views.csv`, which
+  is exactly the waste signal page-level telemetry exists to surface.
+- **9 additional under-9-view pages** in long reports
+  (the legacy v0.2.x "never-viewed in 90d" signal).
 
 When you run `dashboard/PageUsageDashboard.html`, the headline numbers
 you'll see are:
@@ -301,10 +319,14 @@ you'll see are:
 | --- | --- |
 | Workspaces | 5 |
 | Reports | 15 |
-| Distinct pages | 231 |
+| Distinct pages defined (catalog) | 232 |
+| Distinct pages viewed | 221 |
 | Total page views | 154,815 |
-| **Pages never viewed in 90 days** | **9** |
+| **Pages defined but never viewed in 90 days** | **10** |
+| **Reports with at least one unused page** | **3** |
 | **Underused pages (1–99 views in 90 days)** | **67** |
+| Report-level rows (90 days × 15 reports) | 1,350 |
+| User-level rows (hashed UPN) | 6,289 |
 
 These numbers are reproducible — the data generator is fully deterministic
 (CRC32-seeded RNG), so `python generate_sample_data.py` will always

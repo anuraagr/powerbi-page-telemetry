@@ -7,34 +7,62 @@ accordingly before exposing it to a broader audience.
 
 ## What is and isn't PII in the silver layer
 
-The shipped silver schema (see [`data-dictionary.md`](data-dictionary.md))
-is **all non-PII**. The DAX query the collector issues against the
-Usage Metrics dataset is intentionally **aggregated** at the
-`(workspace, report, page, day)` grain, with `unique_users` exposed
-only as a count (`DISTINCTCOUNT`), not as a list of UPNs.
+`page_views`, `page_catalog`, and `report_views` are **all non-PII**.
+`user_views` (v0.3.0) carries **pseudonymized PII** (hashed UPN).
 
-| Field | PII? | Notes |
+The DAX queries the collector issues against the Usage Metrics
+dataset are intentionally **aggregated**: `page_views` at
+`(workspace, report, page, day)`, `report_views` at
+`(workspace, report, day)`, `user_views` at
+`(workspace, report, user_id_hash, day)`. Raw UPNs are hashed inside
+the collector process (SHA-256 of `lower(strip(upn))`, first 16 hex
+chars) **before** they are written to silver — UPN strings never
+touch disk.
+
+| Table.Field | PII? | Notes |
 |---|---|---|
-| `workspace_id` / `workspace_name` | No | Tenant metadata. |
-| `report_id` / `report_name` | No | Tenant metadata. |
-| `page_id` / `page_name` | No | Report design metadata. |
-| `view_date` | No | Day-level date, no time-of-day. |
-| `view_count` | No | Aggregate count. |
-| `unique_users` | No | Aggregate count (no UPNs). |
-| `avg_dwell_seconds` | No | Aggregate. |
-| `top_persona` | No | Optional enrichment category, not user-identifying. |
-| `capacity_name` | No | Tenant metadata. |
+| `page_views.workspace_id` / `workspace_name` | No | Tenant metadata. |
+| `page_views.report_id` / `report_name` | No | Tenant metadata. |
+| `page_views.page_id` / `page_name` | No | Report design metadata. |
+| `page_views.view_date` | No | Day-level date, no time-of-day. |
+| `page_views.view_count` | No | Aggregate count. |
+| `page_views.unique_users` | No | Aggregate count (no UPNs). |
+| `page_views.avg_dwell_seconds` | No | Aggregate. |
+| `page_views.top_persona` | No | Optional enrichment category, not user-identifying. |
+| `page_views.capacity_name` | No | Tenant metadata. |
+| `page_catalog.*` (v0.3.0) | No | Page roster only — no view data, no users. |
+| `report_views.*` (v0.3.0) | No | Same shape as page_views minus the page dimension. |
+| **`user_views.user_id_hash`** (v0.3.0) | **Pseudonymized** | SHA-256-of-lowercased-UPN, first 16 hex chars. **NOT** reversible by anyone outside the tenant. Treat as PII-equivalent for retention, RLS, and DSAR. |
+| `user_views.view_count` / `distinct_pages_viewed` | No (in isolation) | Aggregates per hashed user. |
 
-The **risk** therefore comes from how the data is **combined and
-exposed**, not from the data itself.
+### Why hash UPNs instead of dropping them entirely?
 
-### Where PII can sneak in
+`user_views` exists to answer 2 real customer questions Jon at Incyte
+asked for:
 
-1. **Custom DAX that selects `[User]`**. The
-   `Report page views` table has a `[User]` column (UPN). If you write
-   a custom DAX query that projects it — e.g. for an exec
-   "top viewers" page — you are now handling PII. The shipped collector
-   does not do this.
+1. **Power-user identification** — "who in my org actively uses this
+   60-page report?" so we know who to call before deprecating a page.
+2. **Capacity SKU sizing** — `[Unique Users]` and `[Power Users]`
+   measures justify Fabric capacity tier and CU pricing.
+
+Both need *per-user* aggregates without needing to read the actual
+identity. Hashing preserves the join key (same user → same hash, so
+GROUP BY works) while making the value un-enumerable from outside.
+
+To convert a hash back to a name (e.g. for a top-50 power-users
+mailout), re-hash the candidate UPN and look it up — don't try to
+reverse the hash. The cleanest pattern is a *separate, governed*
+"people" semantic model with RLS that joins `user_id_hash` →
+`display_name` only for callers who already have AAD permission to
+see those names.
+
+### Where PII can still sneak in
+
+1. **Custom DAX that selects `[User]` from the raw model**. If you
+   write a custom DAX query outside the collector that projects the
+   raw `[User]` column — e.g. directly against Power BI's Modern
+   Usage Metrics semantic model from Power BI Desktop — you are now
+   handling unhashed PII. The shipped collector never does this.
 2. **Reports whose names contain patient or clinician identifiers**.
    Some healthcare tenants name reports `MRN_123456_Trial_Status`. The
    `report_name` field will carry those forward. If your tenant does
@@ -42,6 +70,11 @@ exposed**, not from the data itself.
    the silver layer outside admin.
 3. **Workspaces named after individuals**. Same problem as above for
    `workspace_name`.
+4. **Joining `user_views` against a "people" table inside the same
+   dataset**. If a BI developer joins `user_id_hash` → display name
+   inside `page_telemetry_gold`, the join now exposes UPNs to
+   anyone with read on the gold model. Keep the people-table join in
+   a *separate*, RLS-gated semantic model.
 
 ## Retention
 
